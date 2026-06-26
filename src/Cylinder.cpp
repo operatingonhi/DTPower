@@ -39,31 +39,27 @@ void Cylinder::update_heat_transfer_parameters(double c1, double c2, double c3) 
 }
 
 void Cylinder::handle_spark_ignition(double spark_energy) {
-    // Check if conditions are met for combustion
-    double T = gas->temperature();
-    double P = gas->pressure();
-    
     if (!combustion_occurred && spark_energy > 0.0) {
         // Store state before combustion for heat release calculation
-        double T_before = gas->temperature();
-        double h_before = gas->enthalpy() * mass;  // Total enthalpy before
+        double h_before = gas->enthalpy() * mass;  // Total enthalpy before [J]
         
-        // Perform equilibrium combustion
+        // Perform equilibrium combustion at constant internal energy and volume
         gas->get_solution()->thermo()->equilibrate("UV");
         
         // Calculate heat release from enthalpy change
-        double h_after = gas->enthalpy() * mass;   // Total enthalpy after
-        double heat_released = h_before - h_after; // Heat released (positive value)
+        double h_after = gas->enthalpy() * mass;   // Total enthalpy after [J]
+        double heat_released = h_before - h_after; // Heat released (positive value) [J]
         
         // Store the instantaneous heat release rate for this time step
-        // Convert to rate by dividing by a small time interval
-        instantaneous_heat_release_rate = heat_released / 1e-6; // Assume 1 microsecond duration
+        // Assume combustion occurs over 1 microsecond
+        const double combustion_duration = 1e-6;  // [s]
+        instantaneous_heat_release_rate = heat_released / combustion_duration;  // [J/s]
         
         std::cout << "Instantaneous combustion completed!" << std::endl;
-        std::cout << "Temperature after combustion: " << gas->temperature() << "K" << std::endl;
-        std::cout << "Pressure after combustion: " << gas->pressure()/1e5 << "bar" << std::endl;
-        std::cout << "Heat released: " << heat_released/1e6 << " MJ" << std::endl;
-        std::cout << "Heat release rate: " << instantaneous_heat_release_rate << " J/sec" << std::endl;
+        std::cout << "  Temperature after: " << gas->temperature() << " K" << std::endl;
+        std::cout << "  Pressure after: " << gas->pressure() / 1e5 << " bar" << std::endl;
+        std::cout << "  Heat released: " << heat_released / 1e6 << " MJ" << std::endl;
+        std::cout << "  Heat release rate: " << instantaneous_heat_release_rate / 1e6 << " MW" << std::endl;
         
         combustion_occurred = true;
     }
@@ -81,7 +77,7 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
     
     DEBUG_CHECK_TEMPERATURE(initial_T, "Initial state");
     DEBUG_CHECK_PRESSURE(initial_P, "Initial state");
-    DEBUG_LOG("Initial: T=" + std::to_string(initial_T) + "K, P=" + std::to_string(initial_P/1e5) + "bar, V_ratio=" + std::to_string(volume/initial_volume));
+    DEBUG_LOG("Initial: T=" + std::to_string(initial_T) + " K, P=" + std::to_string(initial_P / 1e5) + " bar, V_ratio=" + std::to_string(volume / initial_volume));
     
     // Get state after chemistry (chemistry is now handled by the reactor)
     double T_after_chemistry = gas->temperature();
@@ -94,23 +90,16 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
     // Apply isentropic compression/expansion due to volume change
     double volume_ratio = volume / initial_volume;
     
-    if (std::abs(volume_ratio - 1.0) > 1e-6) { // Volume changes continuously during piston motion
+    if (std::abs(volume_ratio - 1.0) > 1e-6) {
         PROFILE_SCOPE("isentropic_process");
         
-        // For isentropic process with heat release, we need to account for both:
-        // 1. Entropy change due to chemical reactions
-        // 2. Volume change at constant entropy (compression/expansion)
-        
-        // Calculate the entropy change due to chemistry
-        double entropy_change_chemistry = S_after_chemistry - initial_S;
-        
         // Apply isentropic compression/expansion from the post-chemistry state
-        // New entropy = post-chemistry entropy (chemistry effects are already included)
+        // The entropy after chemistry already includes chemical reaction effects
         double new_density = mass / volume;
+        double specific_volume = 1.0 / new_density;
         
-        // Use Cantera's setState_SV (entropy-volume) to maintain isentropic process
-        // This automatically calculates the correct temperature and pressure
-        gas->set_state_SV(S_after_chemistry, 1.0/new_density);
+        // Use Cantera's setState_SV (entropy, specific volume) to maintain isentropic process
+        gas->set_state_SV(S_after_chemistry, specific_volume);
     }
     
     // Get state after isentropic process
@@ -136,19 +125,13 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
         // Store the heat transfer rate for output
         current_heat_transfer_rate = net_heat_rate;
         
-        // Debug output to check magnitude
-        //if (std::abs(net_heat_rate) > 1e-6) {
-        //    std::cout << "Heat transfer rate: " << net_heat_rate/1000.0 << " kW, T_gas=" << T_after_isentropic << "K, Surface area=" << surface_area << " m²" << std::endl;
-        //}
+        // Apply heat transfer at constant volume by updating internal energy
+        double current_internal_energy = gas->internal_energy() * mass;  // Total internal energy [J]
+        double new_internal_energy = current_internal_energy + net_heat_rate * dt;  // [J]
+        double specific_internal_energy = new_internal_energy / mass;  // [J/kg]
+        double specific_volume = volume / mass;  // [m³/kg]
         
-        // For heat transfer at constant volume, we can use Cantera's capability
-        // to set internal energy directly
-        double current_internal_energy = gas->internal_energy() * mass; // Total internal energy
-        double new_internal_energy = current_internal_energy + net_heat_rate * dt;
-        double specific_internal_energy = new_internal_energy / mass;
-        
-        // Use setState_UV (internal energy - specific volume) for constant volume heat transfer
-        double specific_volume = volume / mass;
+        // Use setState_UV (internal energy, specific volume) for constant volume heat transfer
         gas->set_state_UV(specific_internal_energy, specific_volume);
             
     }
@@ -188,10 +171,11 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
         auto Y_current = gas->mass_fractions();
         auto Y_incoming = mixing_gas->mass_fractions();
         
-        // Mass-weighted mixing of enthalpy (energy conservation)
-        double mixed_enthalpy = (current_mass * current_enthalpy + dm * mixing_gas->enthalpy()) / new_total_mass;
+        // Mass-weighted mixing for energy conservation
+        double incoming_enthalpy = mixing_gas->enthalpy();
+        double mixed_enthalpy = (current_mass * current_enthalpy + dm * incoming_enthalpy) / new_total_mass;
         
-        // Mass-weighted mixing of compositions
+        // Mass-weighted mixing of species compositions
         std::vector<double> Y_mixed(Y_current.size());
         for (size_t i = 0; i < Y_current.size(); ++i) {
             Y_mixed[i] = (current_mass * Y_current[i] + dm * Y_incoming[i]) / new_total_mass;
@@ -211,14 +195,16 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
         double T_guess = gas->temperature();
         double P_mixing = current_pressure;
         
-        // Iterate to find correct temperature for target enthalpy
-        for (int iter = 0; iter < 20; iter++) {
+        // Iterate to find temperature that gives the target mixed enthalpy
+        const int max_iterations = 20;
+        for (int iter = 0; iter < max_iterations; iter++) {
             gas->set_state_TPY(T_guess, P_mixing, Y_mixed);
             double h_current = gas->enthalpy();
             double error = h_current - mixed_enthalpy;
             
-            if (std::abs(error) < 1e-6 * std::abs(mixed_enthalpy)) {
-                break; // Converged
+            const double convergence_tolerance = 1e-6;
+            if (std::abs(error) < convergence_tolerance * std::abs(mixed_enthalpy)) {
+                break;  // Converged
             }
             
             // Calculate derivative dh/dT at constant pressure
@@ -228,13 +214,17 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
             double dh_dT = (h_plus - h_current) / dT_test;
             
             // Newton-Raphson update
-            if (std::abs(dh_dT) > 1e-10) {
+            const double min_derivative = 1e-10;
+            const double min_temperature = 200.0;   // [K]
+            const double max_temperature = 4000.0;  // [K]
+            
+            if (std::abs(dh_dT) > min_derivative) {
                 T_guess -= error / dh_dT;
-                T_guess = std::max(200.0, std::min(T_guess, 4000.0)); // Reasonable bounds
+                T_guess = std::max(min_temperature, std::min(T_guess, max_temperature));
             } else {
-                // Fallback: simple proportional adjustment
+                // Fallback: proportional adjustment
                 T_guess *= mixed_enthalpy / h_current;
-                T_guess = std::max(200.0, std::min(T_guess, 4000.0));
+                T_guess = std::max(min_temperature, std::min(T_guess, max_temperature));
                 break;
             }
         }
@@ -252,10 +242,9 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
         combustion_occurred = false;
         
     } catch (const std::exception& e) {
-        // Fallback to simpler approach if Cantera operations fail
-        std::cerr << "Warning: Advanced Cantera mixing failed: " << e.what() << std::endl;
+        std::cerr << "Warning: Advanced mixing failed: " << e.what() << std::endl;
         
-        // Simple fallback: assume incoming gas has same composition as current gas
+        // Fallback: assume incoming gas has same composition as current gas
         double current_mass = mass;
         double new_total_mass = current_mass + dm;
         double current_enthalpy = gas->enthalpy();
@@ -263,9 +252,11 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
         
         mass = new_total_mass;
         
-        // Simple temperature calculation from mixed enthalpy
+        // Estimate temperature from mixed enthalpy
+        const double min_temperature = 200.0;   // [K]
+        const double max_temperature = 4000.0;  // [K]
         double mixed_T = mixed_enthalpy / gas->cp();
-        mixed_T = std::max(200.0, std::min(mixed_T, 4000.0));
+        mixed_T = std::max(min_temperature, std::min(mixed_T, max_temperature));
         
         // Calculate new pressure from ideal gas law
         double new_density = mass / volume;
@@ -288,13 +279,14 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
     double current_enthalpy = gas->enthalpy();  // Specific enthalpy [J/kg]
     auto current_Y = gas->mass_fractions();
     
-    // Calculate new mass (prevent zero mass)
-    double new_mass = std::max(current_mass/10.0, current_mass - dm);
+    // Calculate new mass (prevent excessive mass removal)
+    const double min_mass_fraction = 0.1;
+    double new_mass = std::max(current_mass * min_mass_fraction, current_mass - dm);
     
-    // Calculate total enthalpy before and after mass removal
-    double total_enthalpy_before = current_mass * current_enthalpy;  // Total enthalpy [J]
-    double enthalpy_removed = dm * current_enthalpy;  // Enthalpy leaving with dm [J]
-    double total_enthalpy_after = total_enthalpy_before - enthalpy_removed;  // Remaining enthalpy [J]
+    // Calculate enthalpy balance
+    double total_enthalpy_before = current_mass * current_enthalpy;  // [J]
+    double enthalpy_removed = dm * current_enthalpy;  // [J]
+    double total_enthalpy_after = total_enthalpy_before - enthalpy_removed;  // [J]
     
     // Calculate new specific enthalpy of remaining gas
     double new_specific_enthalpy = total_enthalpy_after / new_mass;  // [J/kg]
@@ -303,15 +295,14 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
     mass = new_mass;
     
     try {
-        // Use current temperature as initial guess
-        double P_guess = gas->pressure();
-        
-        gas->set_state_HP(new_specific_enthalpy, P_guess);
+        // Set state using enthalpy and pressure
+        double current_pressure = gas->pressure();
+        gas->set_state_HP(new_specific_enthalpy, current_pressure);
         
     } catch (const std::exception& e) {
-        std::cerr << "Warning: Enthalpy-based mass removal failed: " << e.what() << std::endl;
+        std::cerr << "Warning: Mass removal failed: " << e.what() << std::endl;
         
-        // Fallback: maintain temperature but recalculate pressure for new density
+        // Fallback: maintain temperature, recalculate pressure for new density
         double current_T = gas->temperature();
         double new_density = mass / volume;
         double R_specific = 8314.0 / gas->mean_molecular_weight();
@@ -322,7 +313,6 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
 }
 
 void Cylinder::advance_chemistry(double dt) {
-    // Only advance chemistry if combustion hasn't occurred
     if (!combustion_occurred) {
         gas->advance_chemistry(dt);
     }
@@ -362,15 +352,10 @@ double Cylinder::get_heat_transfer_rate() const {
 }
 
 double Cylinder::get_heat_release_rate() {
-    // Combine kinetic heat release with instantaneous combustion heat release
-    double kinetic_heat_release = gas->heat_release_rate();
-    //
-    // Reset instantaneous heat release rate after each time step
-    double instantaneous_heat_release_rate_holder = instantaneous_heat_release_rate;
+    // Return and reset instantaneous heat release rate
+    double heat_release = instantaneous_heat_release_rate;
     instantaneous_heat_release_rate = 0.0;
-    
-    //return kinetic_heat_release + instantaneous_heat_release_rate;
-    return instantaneous_heat_release_rate_holder;
+    return heat_release;
 }
 
 double Cylinder::get_gamma() const {
