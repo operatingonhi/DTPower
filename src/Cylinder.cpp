@@ -357,7 +357,6 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
     if (final_T > 5000.0) {
         DEBUG_LOG("EXTREME TEMPERATURE DETECTED!");
         DEBUG_LOG("Volume ratio: " + std::to_string(volume_ratio));
-        DEBUG_LOG("Combustion occurred: " + std::to_string(combustion_occurred));
     }
     
     // Update previous_volume for next time step
@@ -476,9 +475,6 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
         double new_P = new_density * R_specific * mixed_T;
         
         gas->set_state_TPY(mixed_T, new_P, gas->mass_fractions());
-        
-        // Reset combustion state
-        combustion_occurred = false;
     }
 }
 
