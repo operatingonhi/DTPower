@@ -407,7 +407,10 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
     DEBUG_CHECK_PRESSURE(initial_P, "Initial state");
     DEBUG_LOG("Initial: T=" + std::to_string(initial_T) + " K, P=" + std::to_string(initial_P / 1e5) + " bar, V_ratio=" + std::to_string(volume / initial_volume));
     
-    // Get state after chemistry (chemistry is now handled by the reactor)
+    // Advance chemistry first
+    advance_chemistry(dt);
+    
+    // Get state after chemistry
     double T_after_chemistry = gas->temperature();
     double P_after_chemistry = gas->pressure();
     double S_after_chemistry = gas->entropy();
