@@ -215,21 +215,38 @@ void Cylinder::update_combustion_zones(double dt) {
         return;
     }
     
-    // Get current pressure (same for all zones)
+    // Calculate change in specific internal energy due to compression/expansion
+    // This represents the work done on/by the gas during volume change
+    double u_gas_before = gas->internal_energy();  // [J/kg]
+    double P_gas_before = gas->pressure();
+    
+    // Get current pressure after volume change (from main gas object)
     double P = gas->pressure();
     
-    // Update all zones to current pressure
+    // Calculate change in specific internal energy
+    // For an isentropic process: du = -P*dv where v is specific volume
+    double specific_volume_before = previous_volume / mass;  // [m³/kg]
+    double specific_volume_now = volume / mass;  // [m³/kg]
+    double delta_u = u_gas_before - gas->internal_energy();  // [J/kg]
+    
+    // Update all zones with new pressure AND internal energy change
     double T_u = unburned_zone->temperature();
     std::vector<double> Y_u = unburned_zone->mass_fractions();
-    unburned_zone->set_state_TPY(T_u, P, Y_u);
+    double u_u = unburned_zone->internal_energy();
+    double v_u = 1.0 / unburned_zone->density();
+    unburned_zone->set_state_UV(u_u + delta_u, specific_volume_now);
     
     double T_f = flame_zone->temperature();
     std::vector<double> Y_f = flame_zone->mass_fractions();
-    flame_zone->set_state_TPY(T_f, P, Y_f);
+    double u_f = flame_zone->internal_energy();
+    double v_f = 1.0 / flame_zone->density();
+    flame_zone->set_state_UV(u_f + delta_u, specific_volume_now);
     
     double T_b = burned_zone->temperature();
     std::vector<double> Y_b = burned_zone->mass_fractions();
-    burned_zone->set_state_TPY(T_b, P, Y_b);
+    double u_b = burned_zone->internal_energy();
+    double v_b = 1.0 / burned_zone->density();
+    burned_zone->set_state_UV(u_b + delta_u, specific_volume_now);
     
     // Calculate mass flow rates
     std::cout << "[DEBUG] Calculating mass flow rates..." << std::endl;
