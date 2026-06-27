@@ -12,11 +12,12 @@ CanteraInterface::CanteraInterface(const std::string& mechanism_file) {
         thermo = gas->thermo().get();
         kinetics = gas->kinetics().get();
         
-        // Initialize reactor for chemistry integration
-        reactor = std::make_unique<Cantera::IdealGasReactor>(gas);
+        // Initialize reactor for chemistry integration with clone=true to avoid deprecation warning
+        reactor = std::make_unique<Cantera::IdealGasReactor>(gas, true);
         
-        reactor_net = std::make_unique<Cantera::ReactorNet>();
-        reactor_net->addReactor(*reactor);
+        // Initialize reactor net with reactor directly to avoid deprecation warning
+        std::vector<Cantera::Reactor*> reactors = {reactor.get()};
+        reactor_net = std::make_unique<Cantera::ReactorNet>(reactors);
         
     } catch (const std::exception& e) {
         throw std::runtime_error("Failed to initialize Cantera: " + std::string(e.what()));
