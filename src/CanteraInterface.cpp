@@ -38,20 +38,37 @@ void CanteraInterface::set_state_TP(double T, double P) {
 }
 
 void CanteraInterface::advance_chemistry(double dt) {
-    if (!kinetics || dt <= 0.0) return;
+    if (!kinetics || dt <= 0.0) {
+        std::cout << "[DEBUG] CanteraInterface::advance_chemistry skipped: kinetics=" 
+                  << (kinetics != nullptr) << ", dt=" << dt << std::endl;
+        return;
+    }
+    
+    std::cout << "[DEBUG] CanteraInterface::advance_chemistry starting: dt=" << dt 
+              << ", T=" << thermo->temperature() << " K, P=" << thermo->pressure() / 1e5 
+              << " bar" << std::endl;
     
     try {
         // Set reactor state to current thermo state
+        std::cout << "[DEBUG] Syncing reactor state..." << std::endl;
         reactor->syncState();
         
         // Advance the reactor network
         double t0 = reactor_net->time();
+        std::cout << "[DEBUG] Advancing reactor network from t=" << t0 
+                  << " to t=" << (t0 + dt) << std::endl;
         reactor_net->advance(t0 + dt);
+        std::cout << "[DEBUG] Reactor network advanced successfully" << std::endl;
         
         // The reactor automatically updates the gas state
         
+        std::cout << "[DEBUG] CanteraInterface::advance_chemistry complete: T=" 
+                  << thermo->temperature() << " K" << std::endl;
+        
     } catch (const std::exception& e) {
-        std::cerr << "Warning: Cantera reactor integration failed: " << e.what() << std::endl;
+        std::cerr << "[ERROR] Cantera reactor integration failed: " << e.what() << std::endl;
+        std::cerr << "[ERROR] State at failure: T=" << thermo->temperature() 
+                  << " K, P=" << thermo->pressure() / 1e5 << " bar" << std::endl;
         // Fallback: no chemistry advancement
     }
 }
