@@ -72,7 +72,8 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
 void Cylinder::initialize_combustion_zones() {
     // Initialize all zones with current cylinder state
     double T = gas->temperature();
-    double T_ign = 2000;
+    double T_spark = 2000; 
+    double T_ign = T_spark;
     double P = gas->pressure();
     std::vector<double> Y = gas->mass_fractions();
     
