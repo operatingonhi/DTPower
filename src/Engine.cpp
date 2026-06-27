@@ -328,10 +328,6 @@ void Engine::run_cycle() {
             double cycles_per_second = engine_speed / (60.0 * strokes_per_cycle);
             double mass_flow_rate = cylinder->get_mass() * cycles_per_second;
             fuel_energy_rate = mass_flow_rate * lower_heating_value;  // [W]
-            
-            std::cout << "LHV: " << lower_heating_value / 1e6 << " MJ/kg" << std::endl;
-            std::cout << "Fuel energy rate: " << fuel_energy_rate / 1e3 << " kW" << std::endl;
-            
             cylinder->handle_spark_ignition(spark_power * adaptive_time_step);
             
             // Capture post-combustion temperature
