@@ -203,7 +203,12 @@ double Cylinder::calculate_mass_flow_out_of_flame(double mass_flow_in) {
 }
 
 void Cylinder::update_combustion_zones(double dt) {
+    std::cout << "[DEBUG] update_combustion_zones: mass_unburned=" << mass_unburned 
+              << ", mass_flame=" << mass_flame 
+              << ", mass_burned=" << mass_burned << std::endl;
+    
     if (!combustion_active || mass_unburned <= 1e-12) {
+        std::cout << "[DEBUG] Combustion not active or no unburned mass remaining" << std::endl;
         combustion_active = false;
         instantaneous_heat_release_rate = 0.0;
         return;
@@ -226,12 +231,17 @@ void Cylinder::update_combustion_zones(double dt) {
     burned_zone->set_state_TPY(T_b, P, Y_b);
     
     // Calculate mass flow rates
+    std::cout << "[DEBUG] Calculating mass flow rates..." << std::endl;
     double mass_flow_in = calculate_mass_flow_into_flame();  // [kg/s]
+    std::cout << "[DEBUG] mass_flow_in=" << mass_flow_in << " kg/s" << std::endl;
+    
     double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
+    std::cout << "[DEBUG] mass_flow_out=" << mass_flow_out << " kg/s" << std::endl;
     
     // Calculate mass transfers
     double dm_in = mass_flow_in * dt;  // [kg]
     double dm_out = mass_flow_out * dt;  // [kg]
+    std::cout << "[DEBUG] dm_in=" << dm_in << " kg, dm_out=" << dm_out << " kg" << std::endl;
     
     // Limit transfers to available mass
     dm_in = std::min(dm_in, mass_unburned);
@@ -286,7 +296,11 @@ void Cylinder::update_combustion_zones(double dt) {
     
     // Advance chemistry in flame zone (reactions progress here)
     if (mass_flame > 1e-12) {
+        std::cout << "[DEBUG] Advancing flame zone chemistry: T=" << flame_zone->temperature() 
+                  << " K, P=" << flame_zone->pressure() / 1e5 << " bar" << std::endl;
         flame_zone->advance_chemistry(dt);
+        std::cout << "[DEBUG] Flame zone chemistry complete: T=" << flame_zone->temperature() 
+                  << " K" << std::endl;
     }
     
     // Transfer mass from flame to burned zone
@@ -346,8 +360,10 @@ void Cylinder::update_combustion_zones(double dt) {
     // Check if combustion is complete
     if (mass_unburned < 1e-12 && mass_flame < 1e-12) {
         combustion_active = false;
-        std::cout << "Combustion complete: all mass burned" << std::endl;
+        std::cout << "[DEBUG] Combustion complete: all mass burned" << std::endl;
     }
+    
+    std::cout << "[DEBUG] update_combustion_zones complete" << std::endl;
 }
 
 void Cylinder::mix_zones_to_cylinder() {
@@ -641,13 +657,24 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
 }
 
 void Cylinder::advance_chemistry(double dt) {
+    std::cout << "[DEBUG] Cylinder::advance_chemistry called: dt=" << dt 
+              << ", combustion_active=" << combustion_active 
+              << ", combustion_initiated=" << combustion_initiated << std::endl;
+    
     // Update combustion zones if combustion is active
     if (combustion_active) {
+        std::cout << "[DEBUG] Updating combustion zones..." << std::endl;
         update_combustion_zones(dt);
+        std::cout << "[DEBUG] Mixing zones to cylinder..." << std::endl;
         mix_zones_to_cylinder();
+        std::cout << "[DEBUG] Combustion zones updated successfully" << std::endl;
     } else if (!combustion_initiated) {
         // Only advance chemistry if combustion hasn't started yet
+        std::cout << "[DEBUG] Advancing chemistry (no combustion)..." << std::endl;
         gas->advance_chemistry(dt);
+        std::cout << "[DEBUG] Chemistry advanced successfully" << std::endl;
+    } else {
+        std::cout << "[DEBUG] Skipping chemistry (combustion initiated but not active)" << std::endl;
     }
 }
 
