@@ -328,9 +328,11 @@ void Engine::run_cycle() {
             double cycles_per_second = engine_speed / (60.0 * strokes_per_cycle);
             double mass_flow_rate = cylinder->get_mass() * cycles_per_second;
             fuel_energy_rate = mass_flow_rate * lower_heating_value;  // [W]
-            cylinder->handle_spark_ignition(spark_power * adaptive_time_step);
-            
-            // Capture post-combustion temperature
+            cylinder->initiate_spark_ignition(spark_power * adaptive_time_step);
+        }
+        
+        // Capture peak temperature during combustion
+        if (cylinder->get_temperature() > T3) {
             T3 = cylinder->get_temperature();
         }
         

@@ -9,14 +9,22 @@ Cylinder::Cylinder(double cylinder_bore, double cylinder_stroke, double clearanc
                    const std::string& mechanism_file, double wall_temp)
     : bore(cylinder_bore), stroke(cylinder_stroke), clearance_volume(clearance_vol),
       wall_temperature(wall_temp), mass(0.0), volume(clearance_vol),
-      previous_volume(clearance_vol), combustion_occurred(false), spark_conditions_met(false),
-      current_heat_transfer_rate(0.0), instantaneous_heat_release_rate(0.0) {
+      previous_volume(clearance_vol), combustion_active(false), combustion_initiated(false),
+      current_heat_transfer_rate(0.0), instantaneous_heat_release_rate(0.0),
+      adiabatic_flame_temp(0.0), target_flame_temp(0.0), flame_radius(0.001),
+      mass_unburned(0.0), mass_flame(0.0), mass_burned(0.0),
+      mechanism_file(mechanism_file) {
     
     gas = std::make_unique<CanteraInterface>(mechanism_file);
     heat_transfer = std::make_unique<WoschniHeatTransfer>(bore, stroke);
     
     // Initialize persistent mixing gas object
     mixing_gas = std::make_unique<CanteraInterface>(mechanism_file);
+    
+    // Initialize combustion zone reactors
+    unburned_zone = std::make_unique<CanteraInterface>(mechanism_file);
+    flame_zone = std::make_unique<CanteraInterface>(mechanism_file);
+    burned_zone = std::make_unique<CanteraInterface>(mechanism_file);
     
     // Mass will be set when initialize_cycle() is called
     mass = 0.0;
@@ -38,30 +46,233 @@ void Cylinder::update_heat_transfer_parameters(double c1, double c2, double c3) 
     heat_transfer = std::make_unique<WoschniHeatTransfer>(bore, stroke, c1, c2, c3);
 }
 
-void Cylinder::handle_spark_ignition(double spark_energy) {
-    if (!combustion_occurred && spark_energy > 0.0) {
-        // Store state before combustion for heat release calculation
-        double h_before = gas->enthalpy() * mass;  // Total enthalpy before [J]
+void Cylinder::initiate_spark_ignition(double spark_energy) {
+    if (!combustion_initiated && spark_energy > 0.0) {
+        // Initialize the three-zone combustion model
+        initialize_combustion_zones();
         
-        // Perform equilibrium combustion at constant internal energy and volume
-        gas->get_solution()->thermo()->equilibrate("UV");
+        // Calculate adiabatic flame temperature for current conditions
+        calculate_adiabatic_flame_temperature();
         
-        // Calculate heat release from enthalpy change
-        double h_after = gas->enthalpy() * mass;   // Total enthalpy after [J]
-        double heat_released = h_before - h_after; // Heat released (positive value) [J]
+        // Set target flame temperature
+        target_flame_temp = flame_temp_fraction * adiabatic_flame_temp;
         
-        // Store the instantaneous heat release rate for this time step
-        // Assume combustion occurs over 1 microsecond
-        const double combustion_duration = 1e-6;  // [s]
-        instantaneous_heat_release_rate = heat_released / combustion_duration;  // [J/s]
+        // Reset flame radius to initial kernel size
+        flame_radius = initial_flame_radius;
         
-        std::cout << "Instantaneous combustion completed!" << std::endl;
-        std::cout << "  Temperature after: " << gas->temperature() << " K" << std::endl;
-        std::cout << "  Pressure after: " << gas->pressure() / 1e5 << " bar" << std::endl;
-        std::cout << "  Heat released: " << heat_released / 1e6 << " MJ" << std::endl;
-        std::cout << "  Heat release rate: " << instantaneous_heat_release_rate / 1e6 << " MW" << std::endl;
+        // Mark combustion as initiated and active
+        combustion_initiated = true;
+        combustion_active = true;
         
-        combustion_occurred = true;
+        std::cout << "Combustion initiated: Tad = " << adiabatic_flame_temp 
+                  << " K, Target flame temp = " << target_flame_temp << " K" << std::endl;
+    }
+}
+
+void Cylinder::initialize_combustion_zones() {
+    // Initialize all zones with current cylinder state
+    double T = gas->temperature();
+    double P = gas->pressure();
+    std::vector<double> Y = gas->mass_fractions();
+    
+    // Unburned zone starts with all the mass
+    unburned_zone->set_state_TPY(T, P, Y);
+    mass_unburned = mass;
+    
+    // Flame zone starts with a small initial kernel
+    flame_zone->set_state_TPY(T, P, Y);
+    mass_flame = 1e-9;  // Very small initial mass
+    
+    // Burned zone starts empty
+    burned_zone->set_state_TPY(T, P, Y);
+    mass_burned = 0.0;
+}
+
+void Cylinder::calculate_adiabatic_flame_temperature() {
+    // Create a temporary gas object for adiabatic flame calculation
+    auto temp_gas = std::make_unique<CanteraInterface>(mechanism_file);
+    
+    // Set to current unburned conditions
+    double T = gas->temperature();
+    double P = gas->pressure();
+    std::vector<double> Y = gas->mass_fractions();
+    temp_gas->set_state_TPY(T, P, Y);
+    
+    // Equilibrate at constant enthalpy and pressure to get adiabatic flame temperature
+    try {
+        temp_gas->get_solution()->thermo()->equilibrate("HP");
+        adiabatic_flame_temp = temp_gas->temperature();
+    } catch (const std::exception& e) {
+        std::cerr << "Warning: Adiabatic flame temperature calculation failed: " 
+                  << e.what() << std::endl;
+        adiabatic_flame_temp = T * 3.0;  // Rough estimate
+    }
+}
+
+double Cylinder::calculate_burning_rate() {
+    // Calculate mass burning rate based on flame surface area and burning velocity
+    // Surface area of spherical flame front
+    double flame_area = 4.0 * M_PI * flame_radius * flame_radius;  // [m²]
+    
+    // Unburned gas density
+    double rho_u = unburned_zone->density();  // [kg/m³]
+    
+    // Mass burning rate = density * velocity * area
+    double burning_rate = rho_u * burning_velocity * flame_area;  // [kg/s]
+    
+    return burning_rate;
+}
+
+void Cylinder::update_combustion_zones(double dt) {
+    if (!combustion_active || mass_unburned <= 1e-12) {
+        combustion_active = false;
+        instantaneous_heat_release_rate = 0.0;
+        return;
+    }
+    
+    // Get current pressure (same for all zones)
+    double P = gas->pressure();
+    
+    // Update unburned zone to current pressure
+    double T_u = unburned_zone->temperature();
+    std::vector<double> Y_u = unburned_zone->mass_fractions();
+    unburned_zone->set_state_TPY(T_u, P, Y_u);
+    
+    // Calculate burning rate
+    double dm_burn = calculate_burning_rate() * dt;  // [kg]
+    dm_burn = std::min(dm_burn, mass_unburned);
+    
+    if (dm_burn <= 0.0) {
+        combustion_active = false;
+        instantaneous_heat_release_rate = 0.0;
+        return;
+    }
+    
+    // Transfer mass from unburned to flame zone
+    mass_unburned -= dm_burn;
+    mass_flame += dm_burn;
+    
+    // Update flame zone composition (mix incoming unburned gas)
+    if (mass_flame > 1e-12) {
+        // Simple mixing: weighted average of compositions
+        std::vector<double> Y_flame = flame_zone->mass_fractions();
+        for (size_t i = 0; i < Y_flame.size(); ++i) {
+            Y_flame[i] = (Y_flame[i] * (mass_flame - dm_burn) + Y_u[i] * dm_burn) / mass_flame;
+        }
+        flame_zone->set_state_TPY(flame_zone->temperature(), P, Y_flame);
+    }
+    
+    // Equilibrate flame zone at constant HP to get products
+    double h_before_flame = flame_zone->enthalpy() * mass_flame;
+    try {
+        flame_zone->get_solution()->thermo()->equilibrate("HP");
+    } catch (const std::exception& e) {
+        std::cerr << "Warning: Flame zone equilibration failed" << std::endl;
+    }
+    double h_after_flame = flame_zone->enthalpy() * mass_flame;
+    
+    // Calculate heat release from flame zone
+    double heat_release = h_after_flame - h_before_flame;  // [J]
+    instantaneous_heat_release_rate = heat_release / dt;   // [W]
+    
+    // Control flame zone temperature by transferring mass to burned zone
+    double T_flame = flame_zone->temperature();
+    
+    // Calculate mass to transfer to maintain target temperature
+    double dm_to_burned = 0.0;
+    if (T_flame > target_flame_temp && mass_flame > 1e-12) {
+        // Transfer enough mass to cool flame zone to target temperature
+        // This is a simplified approach - transfer a fraction of flame mass
+        double temp_ratio = (T_flame - target_flame_temp) / T_flame;
+        dm_to_burned = mass_flame * temp_ratio * 0.5;  // Transfer 50% of excess
+        dm_to_burned = std::min(dm_to_burned, mass_flame * 0.9);  // Keep some mass in flame
+    }
+    
+    if (dm_to_burned > 1e-12) {
+        // Transfer mass from flame to burned zone
+        mass_flame -= dm_to_burned;
+        mass_burned += dm_to_burned;
+        
+        // Update burned zone (mix with incoming products)
+        if (mass_burned > 1e-12) {
+            std::vector<double> Y_flame_products = flame_zone->mass_fractions();
+            std::vector<double> Y_burned = burned_zone->mass_fractions();
+            
+            for (size_t i = 0; i < Y_burned.size(); ++i) {
+                Y_burned[i] = (Y_burned[i] * (mass_burned - dm_to_burned) + 
+                              Y_flame_products[i] * dm_to_burned) / mass_burned;
+            }
+            
+            // Mix enthalpies to get burned zone temperature
+            double h_burned_old = burned_zone->enthalpy() * (mass_burned - dm_to_burned);
+            double h_flame_transfer = flame_zone->enthalpy() * dm_to_burned;
+            double h_burned_new = (h_burned_old + h_flame_transfer) / mass_burned;
+            
+            burned_zone->set_state_TPY(burned_zone->temperature(), P, Y_burned);
+            // Iterate to match enthalpy
+            for (int iter = 0; iter < 5; ++iter) {
+                double h_current = burned_zone->enthalpy();
+                double T_current = burned_zone->temperature();
+                double cp = burned_zone->cp();
+                double T_new = T_current + (h_burned_new - h_current) / cp;
+                burned_zone->set_state_TPY(T_new, P, Y_burned);
+            }
+        }
+    }
+    
+    // Update flame radius based on burned volume
+    double total_volume = volume;
+    double burned_volume_fraction = mass_burned / mass;
+    double burned_volume = total_volume * burned_volume_fraction;
+    flame_radius = std::pow(3.0 * burned_volume / (4.0 * M_PI), 1.0/3.0);
+    
+    // Check if combustion is complete
+    if (mass_unburned < 1e-12 && mass_flame < 1e-12) {
+        combustion_active = false;
+        std::cout << "Combustion complete: all mass burned" << std::endl;
+    }
+}
+
+void Cylinder::mix_zones_to_cylinder() {
+    // Combine all three zones back into the main cylinder gas object
+    // This maintains the overall cylinder state
+    
+    if (!combustion_initiated) {
+        return;  // No combustion zones to mix
+    }
+    
+    double P = gas->pressure();  // Maintain current pressure
+    double total_mass = mass_unburned + mass_flame + mass_burned;
+    
+    if (total_mass < 1e-12) {
+        return;
+    }
+    
+    // Calculate mass-weighted average composition
+    std::vector<double> Y_avg(gas->n_species(), 0.0);
+    std::vector<double> Y_u = unburned_zone->mass_fractions();
+    std::vector<double> Y_f = flame_zone->mass_fractions();
+    std::vector<double> Y_b = burned_zone->mass_fractions();
+    
+    for (size_t i = 0; i < Y_avg.size(); ++i) {
+        Y_avg[i] = (Y_u[i] * mass_unburned + Y_f[i] * mass_flame + Y_b[i] * mass_burned) / total_mass;
+    }
+    
+    // Calculate mass-weighted average enthalpy
+    double h_avg = (unburned_zone->enthalpy() * mass_unburned + 
+                    flame_zone->enthalpy() * mass_flame + 
+                    burned_zone->enthalpy() * mass_burned) / total_mass;
+    
+    // Set cylinder state with averaged composition and enthalpy
+    gas->set_state_TPY(gas->temperature(), P, Y_avg);
+    
+    // Iterate to match enthalpy
+    for (int iter = 0; iter < 5; ++iter) {
+        double h_current = gas->enthalpy();
+        double T_current = gas->temperature();
+        double cp = gas->cp();
+        double T_new = T_current + (h_avg - h_current) / cp;
+        gas->set_state_TPY(T_new, P, Y_avg);
     }
 }
 
@@ -239,7 +450,8 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
         gas->set_state_TPY(final_temperature, final_pressure, Y_mixed);
         
         // Reset combustion state when new mass is added
-        combustion_occurred = false;
+        combustion_initiated = false;
+        combustion_active = false;
         
     } catch (const std::exception& e) {
         std::cerr << "Warning: Advanced mixing failed: " << e.what() << std::endl;
@@ -313,7 +525,12 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
 }
 
 void Cylinder::advance_chemistry(double dt) {
-    if (!combustion_occurred) {
+    // Update combustion zones if combustion is active
+    if (combustion_active) {
+        update_combustion_zones(dt);
+        mix_zones_to_cylinder();
+    } else if (!combustion_initiated) {
+        // Only advance chemistry if combustion hasn't started yet
         gas->advance_chemistry(dt);
     }
 }
