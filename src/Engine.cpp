@@ -577,7 +577,9 @@ void Engine::print_energy_ledger() const {
     double exhaust_kJ = exhaust_energy_loss / 1000.0;
     
     std::cout << std::fixed << std::setprecision(2);
-    std::cout << "Energy Available (LHV):           " << std::setw(8) << total_kJ << " kJ  (100.0%)" << std::endl;
+    std::cout << std::string(60, '-') << std::endl;
+    std::cout << "Energy Available (LHV):           " << std::setw(8) << total_kJ 
+              << " kJ  (100.0%)" << std::endl;
     std::cout << std::string(60, '-') << std::endl;
     
     if (total_lhv_energy > 0) {
