@@ -72,6 +72,7 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
 void Cylinder::initialize_combustion_zones() {
     // Initialize all zones with current cylinder state
     double T = gas->temperature();
+    double T_ign = 2000;
     double P = gas->pressure();
     std::vector<double> Y = gas->mass_fractions();
     
@@ -80,7 +81,7 @@ void Cylinder::initialize_combustion_zones() {
     mass_unburned = mass;
     
     // Flame zone starts with a small initial kernel
-    flame_zone->set_state_TPY(T, P, Y);
+    flame_zone->set_state_TPY(T_ign, P, Y);
     mass_flame = 1e-9;  // Very small initial mass
     
     // Burned zone starts empty
