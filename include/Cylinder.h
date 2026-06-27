@@ -25,11 +25,11 @@ private:
     bool combustion_active;    // True when combustion is ongoing
     bool combustion_initiated; // True after spark has occurred
     double adiabatic_flame_temp; // Calculated adiabatic flame temperature [K]
-    double target_flame_temp;    // Target flame zone temperature (0.9 * Tad) [K]
+    double target_flame_temp;    // Target flame zone temperature (0.75 * Tad) [K]
     
     // Combustion model parameters
-    const double flame_temp_fraction = 0.9;  // Fraction of adiabatic flame temp
-    const double burning_velocity = 10.0;     // Turbulent flame speed [m/s]
+    const double flame_temp_fraction = 0.75;  // Fraction of adiabatic flame temp
+    const double flame_shell_thickness = 0.001; // Flame shell thickness [m]
     const double initial_flame_radius = 0.001; // Initial flame kernel radius [m]
     double flame_radius;                      // Current flame radius [m]
     
@@ -39,7 +39,8 @@ private:
     void initialize_combustion_zones();
     void calculate_adiabatic_flame_temperature();
     void update_combustion_zones(double dt);
-    double calculate_burning_rate();
+    double calculate_mass_flow_into_flame();
+    double calculate_mass_flow_out_of_flame(double mass_flow_in);
     void mix_zones_to_cylinder();
                                                                                   
     double bore;              // Cylinder bore [m]                                
