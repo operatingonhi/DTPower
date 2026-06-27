@@ -1,8 +1,7 @@
 #ifndef CANTERA_INTERFACE_H                                                       
 #define CANTERA_INTERFACE_H                                                       
                                                                                   
-#include "cantera/thermo.h"                                                       
-#include "cantera/kinetics.h"                                                     
+#include "cantera/core.h"                                                       
 #include "cantera/zerodim.h"
 #include <memory>                                                                 
 #include <vector>                                                                 
