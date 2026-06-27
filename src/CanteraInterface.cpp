@@ -15,9 +15,10 @@ CanteraInterface::CanteraInterface(const std::string& mechanism_file) {
         // Initialize reactor for chemistry integration with clone=true to avoid deprecation warning
         reactor = std::make_unique<Cantera::IdealGasReactor>(gas, true);
         
-        // Initialize reactor net with reactor directly to avoid deprecation warning
-        std::vector<Cantera::Reactor*> reactors = {reactor.get()};
-        reactor_net = std::make_unique<Cantera::ReactorNet>(reactors);
+        // Initialize reactor net with shared_ptr to reactor to avoid deprecation warning
+        // Create a shared_ptr that doesn't own the reactor (non-owning shared_ptr)
+        std::shared_ptr<Cantera::ReactorBase> reactor_shared(reactor.get(), [](Cantera::ReactorBase*){});
+        reactor_net = std::make_unique<Cantera::ReactorNet>(reactor_shared);
         
     } catch (const std::exception& e) {
         throw std::runtime_error("Failed to initialize Cantera: " + std::string(e.what()));
