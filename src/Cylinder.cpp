@@ -392,7 +392,6 @@ void Cylinder::mix_zones_to_cylinder() {
         return;  // No combustion zones to mix
     }
     
-    double P = gas->pressure();  // Maintain current pressure
     double total_mass = mass_unburned + mass_flame + mass_burned;
     
     if (total_mass < 1e-12) {
@@ -409,22 +408,26 @@ void Cylinder::mix_zones_to_cylinder() {
         Y_avg[i] = (Y_u[i] * mass_unburned + Y_f[i] * mass_flame + Y_b[i] * mass_burned) / total_mass;
     }
     
-    // Calculate mass-weighted average enthalpy
-    double h_avg = (unburned_zone->enthalpy() * mass_unburned + 
-                    flame_zone->enthalpy() * mass_flame + 
-                    burned_zone->enthalpy() * mass_burned) / total_mass;
+    // Calculate mass-weighted average internal energy
+    double u_avg = (unburned_zone->internal_energy() * mass_unburned + 
+                    flame_zone->internal_energy() * mass_flame + 
+                    burned_zone->internal_energy() * mass_burned) / total_mass;
     
-    // Set cylinder state with averaged composition and enthalpy
-    gas->set_state_TPY(gas->temperature(), P, Y_avg);
+    // Calculate specific volume
+    double v_specific = volume / total_mass;
     
-    // Iterate to match enthalpy
-    for (int iter = 0; iter < 5; ++iter) {
-        double h_current = gas->enthalpy();
-        double T_current = gas->temperature();
-        double cp = gas->cp();
-        double T_new = T_current + (h_avg - h_current) / cp;
-        gas->set_state_TPY(T_new, P, Y_avg);
-    }
+    // Set cylinder state using internal energy and specific volume
+    // This allows pressure to naturally emerge from the thermodynamic state
+    gas->set_state_UV(u_avg, v_specific);
+    
+    // Update composition to match mass-weighted average
+    // We need to do this after setting UV to ensure correct species distribution
+    double T_current = gas->temperature();
+    double P_current = gas->pressure();
+    gas->set_state_TPY(T_current, P_current, Y_avg);
+    
+    // Re-apply UV constraint to maintain energy and volume with new composition
+    gas->set_state_UV(u_avg, v_specific);
 }
 
 void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure) {
