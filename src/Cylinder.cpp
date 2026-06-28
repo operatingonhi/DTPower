@@ -57,15 +57,19 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
         // Set target flame temperature
         target_flame_temp = flame_temp_fraction * adiabatic_flame_temp;
         
-        // Reset flame radius to initial kernel size
-        flame_radius = initial_flame_radius;
+        // Calculate initial flame radius from initial flame kernel mass
+        // Assume flame kernel is a sphere with density of flame zone
+        double rho_flame = flame_zone->density();
+        double flame_volume = mass_flame / rho_flame;
+        flame_radius = std::pow(3.0 * flame_volume / (4.0 * M_PI), 1.0/3.0);
         
         // Mark combustion as initiated and active
         combustion_initiated = true;
         combustion_active = true;
         
         std::cout << "Combustion initiated: Tad = " << adiabatic_flame_temp 
-                  << " K, Target flame temp = " << target_flame_temp << " K" << std::endl;
+                  << " K, Target flame temp = " << target_flame_temp << " K"
+                  << ", Initial flame radius = " << flame_radius * 1000.0 << " mm" << std::endl;
     }
 }
 
