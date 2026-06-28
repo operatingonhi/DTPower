@@ -266,6 +266,7 @@ void Cylinder::update_combustion_zones(double dt) {
     dm_out = std::min(dm_out, mass_flame);
     
     if (dm_in <= 0.0 && dm_out <= 0.0) {
+    	std::cout << "[DEBUG] combustion stoped by negatvie flow rate" << std::endl;
         combustion_active = false;
         instantaneous_heat_release_rate = 0.0;
         return;

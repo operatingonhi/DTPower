@@ -280,6 +280,34 @@ void Engine::run_cycle() {
     
     for (crank_angle = start_angle; crank_angle < target_crank_angle; ) {
         PROFILE_SCOPE("main_loop_iteration");
+	        // Calculate progress percentage
+        double progress = (crank_angle - start_angle) / total_angle_range;
+        int progress_percent = static_cast<int>(progress * 100);
+        
+        // Update progress bar every 2%
+        if (progress_percent > last_progress_percent && progress_percent % 2 == 0) {
+            last_progress_percent = progress_percent;
+            
+            // Clear the line and redraw progress bar
+            std::cout << "\rProgress: [";
+            int filled = static_cast<int>(progress * 50);
+            for (int i = 0; i < 50; ++i) {
+                if (i < filled) std::cout << "=";
+                else if (i == filled) std::cout << ">";
+                else std::cout << " ";
+            }
+            std::cout << "] " << progress_percent << "%" << std::flush;
+            
+            // Show current crank angle and phase
+            std::string phase;
+            if (crank_angle < 0) phase = "Setup";
+            else if (crank_angle < 180) phase = "Intake";
+            else if (crank_angle < 360) phase = "Compression";
+            else if (crank_angle < 540) phase = "Expansion";
+            else phase = "Exhaust";
+            
+            std::cout << " (" << static_cast<int>(crank_angle) << "_ - " << phase << ")" << std::flush;
+        }
         
         // Check if we're in a reactive phase requiring smaller time steps
         const double reactive_temperature_threshold = 1000.0;  // [K]
