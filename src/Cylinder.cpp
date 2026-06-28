@@ -13,7 +13,7 @@ Cylinder::Cylinder(double cylinder_bore, double cylinder_stroke, double clearanc
       current_heat_transfer_rate(0.0), instantaneous_heat_release_rate(0.0),
       adiabatic_flame_temp(0.0), target_flame_temp(0.0), flame_radius(0.001),
       mass_unburned(0.0), mass_flame(0.0), mass_burned(0.0),
-      mechanism_file(mechanism_file) {
+      mechanism_file(mechanism_file), logging_enabled(false) {
     
     gas = std::make_unique<CanteraInterface>(mechanism_file);
     heat_transfer = std::make_unique<WoschniHeatTransfer>(bore, stroke);
@@ -44,6 +44,31 @@ void Cylinder::set_mass(double new_mass) {
 
 void Cylinder::update_heat_transfer_parameters(double c1, double c2, double c3) {
     heat_transfer = std::make_unique<WoschniHeatTransfer>(bore, stroke, c1, c2, c3);
+}
+
+void Cylinder::enable_combustion_logging(const std::string& filename) {
+    if (combustion_log.is_open()) {
+        combustion_log.close();
+    }
+    
+    combustion_log.open(filename);
+    if (combustion_log.is_open()) {
+        logging_enabled = true;
+        // Write CSV header
+        combustion_log << "time_step,mass_flow_in,mass_flow_out,rho_flame,flame_radius,"
+                       << "flame_shell_thickness,T_flame,target_flame_temp,temp_error\n";
+        combustion_log << std::scientific << std::setprecision(6);
+    } else {
+        std::cerr << "Warning: Could not open combustion log file: " << filename << std::endl;
+        logging_enabled = false;
+    }
+}
+
+void Cylinder::disable_combustion_logging() {
+    if (combustion_log.is_open()) {
+        combustion_log.close();
+    }
+    logging_enabled = false;
 }
 
 void Cylinder::initiate_spark_ignition(double spark_energy) {
@@ -128,6 +153,7 @@ double Cylinder::calculate_mass_flow_into_flame() {
     target_flame_temp = flame_temp_fraction * adiabatic_flame_temp;
     
     double T_flame = flame_zone->temperature();
+    double rho_flame = flame_zone->density();
     
     // Control mass flow based on temperature deviation
     // If flame is too cold, reduce mass flow; if too hot, increase mass flow
@@ -164,6 +190,24 @@ double Cylinder::calculate_mass_flow_into_flame() {
     // Limit mass flow to available unburned mass
     double max_flow = mass_unburned / 1e-4;  // Don't consume all mass in 0.1 ms
     mass_flow_in = std::min(mass_flow_in, max_flow);
+    
+    // Log combustion variables if logging is enabled
+    static int time_step = 0;
+    if (logging_enabled && combustion_log.is_open()) {
+        // Calculate mass_flow_out here for logging (will be recalculated in update_combustion_zones)
+        double mass_flow_out_estimate = calculate_mass_flow_out_of_flame(mass_flow_in);
+        
+        combustion_log << time_step << ","
+                       << mass_flow_in << ","
+                       << mass_flow_out_estimate << ","
+                       << rho_flame << ","
+                       << flame_radius << ","
+                       << flame_shell_thickness << ","
+                       << T_flame << ","
+                       << target_flame_temp << ","
+                       << temp_error << "\n";
+        time_step++;
+    }
     
     return mass_flow_in;
 }

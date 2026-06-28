@@ -52,6 +52,10 @@ private:
     double previous_volume;   // Volume from previous time step [m³]
     double current_heat_transfer_rate;  // Current heat transfer rate [W]
     double instantaneous_heat_release_rate;  // Heat release rate from instantaneous combustion [W]
+    
+    // CSV logging for combustion diagnostics
+    std::ofstream combustion_log;
+    bool logging_enabled;
                                                                                   
 public:                                                                           
     Cylinder(double cylinder_bore, double cylinder_stroke, double clearance_vol,  
