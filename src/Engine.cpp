@@ -55,6 +55,9 @@ Engine::Engine(double cylinder_bore, double cylinder_stroke, double connecting_r
     // Initialize persistent intake gas object
     intake_gas = std::make_unique<CanteraInterface>(mechanism_file);
     
+    // Enable combustion logging
+    cylinder->enable_combustion_logging("combustion_diagnostics.csv");
+    
     calculate_time_step();
 }
 
@@ -421,6 +424,9 @@ void Engine::run_cycle() {
     #ifdef PROFILING_ENABLED
     Profiler::getInstance().printReport();
     #endif
+    
+    // Disable combustion logging at end of cycle
+    cylinder->disable_combustion_logging();
 }
 
 void Engine::run_multiple_cycles(int num_cycles) {
