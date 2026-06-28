@@ -61,7 +61,10 @@ public:
     Cylinder(double cylinder_bore, double cylinder_stroke, double clearance_vol,  
              const std::string& mechanism_file, double wall_temp = 450.0);        
                                                                                   
-    ~Cylinder() = default;                                                        
+    ~Cylinder() = default;
+    
+    void enable_combustion_logging(const std::string& filename);
+    void disable_combustion_logging();
                                                                                   
     void set_volume(double new_volume);                                           
     void set_wall_temperature(double T_wall);
