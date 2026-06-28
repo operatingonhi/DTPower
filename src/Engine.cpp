@@ -18,7 +18,7 @@ Engine::Engine(double cylinder_bore, double cylinder_stroke, double connecting_r
       sim_params(sim_params), engine_params(engine_params),
       total_lhv_energy(0.0), indicated_work(0.0), pumping_work(0.0), 
       friction_work(0.0), heat_transfer_loss(0.0), exhaust_energy_loss(0.0),
-      reference_enthalpy(0.0), T3(0.0) {
+      reference_enthalpy(0.0), T3(0.0), valves_flowing(false) {
     
     // Calculate clearance volume from compression ratio
     double displacement = M_PI * bore * bore / 4.0 * stroke;
@@ -106,6 +106,9 @@ void Engine::calculate_valve_flows() {
     double intake_lift = intake_valve->get_lift(crank_angle);
     double exhaust_lift = exhaust_valve->get_lift(crank_angle);
     
+    // Track if any mass flow is occurring
+    bool mass_flowing = false;
+    
     // Specific gas constant for air [J/(kg·K)]
     const double R_air = 287.0;
     
@@ -120,9 +123,11 @@ void Engine::calculate_valve_flows() {
             // Flow into cylinder
             intake_gas->set_state_TPX(intake_temperature, intake_pressure, intake_composition);
             cylinder->add_mass_flow(mass_flow, time_step, intake_composition, intake_temperature);
-        } else {
+            mass_flowing = true;
+        } else if (mass_flow < 0.0) {
             // Backflow out of cylinder
             cylinder->remove_mass_flow(-mass_flow, time_step);
+            mass_flowing = true;
         }
     }
     
@@ -144,8 +149,12 @@ void Engine::calculate_valve_flows() {
             }
             
             cylinder->remove_mass_flow(mass_flow, time_step);
+            mass_flowing = true;
         }
     }
+    
+    // Store valve flow status for use in update_thermodynamics
+    valves_flowing = mass_flowing;
 }
 
 void Engine::store_results() {
@@ -206,6 +215,7 @@ void Engine::initialize_cycle() {
     exhaust_energy_loss = 0.0;
     heat_transfer_loss = 0.0;
     T3 = 0.0;  // Reset T3 for new cycle
+    valves_flowing = false;  // Reset valve flow status
     
     // Initialize cylinder state at starting angle
     cylinder->get_gas()->set_state_TPX(intake_temperature, intake_pressure, intake_composition);
@@ -368,7 +378,7 @@ void Engine::run_cycle() {
         {
             PROFILE_SCOPE("update_thermodynamics");
             double mean_piston_speed = crankshaft->calculate_mean_piston_speed(engine_speed);
-            cylinder->update_thermodynamics(adaptive_time_step, mean_piston_speed, 0.0);
+            cylinder->update_thermodynamics(adaptive_time_step, mean_piston_speed, 0.0, valves_flowing);
         }
         
         // Calculate and accumulate friction work

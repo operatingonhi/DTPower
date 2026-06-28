@@ -431,8 +431,16 @@ void Cylinder::mix_zones_to_cylinder() {
     gas->set_state_UV(u_avg, v_specific);
 }
 
-void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure) {
+void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
     PROFILE_FUNCTION();
+    
+    // Deactivate multizone combustion if valves are flowing
+    if (valves_flowing && combustion_active) {
+        std::cout << "[DEBUG] Deactivating multizone combustion due to valve flow" << std::endl;
+        combustion_active = false;
+        // Mix all zones back to cylinder before deactivating
+        mix_zones_to_cylinder();
+    }
     
     // Store initial state (from PREVIOUS time step)
     double initial_volume = previous_volume;  // Use previous volume, not current

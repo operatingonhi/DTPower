@@ -66,7 +66,7 @@ public:
     
     void initiate_spark_ignition(double spark_energy);
                                                                                      
-    void update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure = 0.0);
+    void update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure = 0.0, bool valves_flowing = false);
                                                                                   
     void add_mass_flow(double mass_flow_rate, double dt, const std::string& incoming_composition, double incoming_temperature);     
     void remove_mass_flow(double mass_flow_rate, double dt);                      

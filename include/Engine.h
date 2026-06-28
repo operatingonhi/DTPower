@@ -44,6 +44,7 @@ private:
     
     // Add persistent intake gas object
     std::unique_ptr<CanteraInterface> intake_gas;
+    bool valves_flowing;  // Track if valves are currently flowing
                                                                                   
     // Engine parameters                                                          
     double bore;              // [m]                                              
