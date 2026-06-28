@@ -58,6 +58,8 @@ void Cylinder::enable_combustion_logging(const std::string& filename) {
         combustion_log << "time_step,mass_flow_in,mass_flow_out,rho_flame,flame_radius,"
                        << "flame_shell_thickness,T_flame,target_flame_temp,temp_error\n";
         combustion_log << std::scientific << std::setprecision(6);
+        combustion_log.flush();  // Ensure header is written immediately
+        std::cout << "Combustion logging enabled: " << filename << std::endl;
     } else {
         std::cerr << "Warning: Could not open combustion log file: " << filename << std::endl;
         logging_enabled = false;
@@ -66,7 +68,9 @@ void Cylinder::enable_combustion_logging(const std::string& filename) {
 
 void Cylinder::disable_combustion_logging() {
     if (combustion_log.is_open()) {
+        combustion_log.flush();  // Ensure all data is written before closing
         combustion_log.close();
+        std::cout << "Combustion logging disabled and file closed" << std::endl;
     }
     logging_enabled = false;
 }
@@ -206,7 +210,12 @@ double Cylinder::calculate_mass_flow_into_flame() {
                        << T_flame << ","
                        << target_flame_temp << ","
                        << temp_error << "\n";
+        combustion_log.flush();  // Flush after each write to ensure data is saved
         time_step++;
+        
+        std::cout << "[COMBUSTION LOG] Step " << time_step 
+                  << ": mass_flow_in=" << mass_flow_in 
+                  << ", T_flame=" << T_flame << std::endl;
     }
     
     return mass_flow_in;
