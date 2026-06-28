@@ -435,7 +435,7 @@ void Cylinder::mix_zones_to_cylinder() {
     gas->set_state_UV(u_avg, v_specific);
 }
 
-void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure) {
+void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
     PROFILE_FUNCTION();
     
     // Store initial state (from PREVIOUS time step)
