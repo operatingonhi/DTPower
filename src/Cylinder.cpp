@@ -108,16 +108,17 @@ void Cylinder::initialize_combustion_zones() {
     double T = gas->temperature();
     double T_spark = 2000; 
     double T_ign = T_spark;
+    double sparkm_ratio = 0.01;
     double P = gas->pressure();
     std::vector<double> Y = gas->mass_fractions();
     
     // Unburned zone starts with all the mass
     unburned_zone->set_state_TPY(T, P, Y);
-    mass_unburned = mass;
+    mass_unburned = mass*(1-sparkm_ratio);
     
     // Flame zone starts with a small initial kernel
     flame_zone->set_state_TPY(T_ign, P, Y);
-    mass_flame = 1e-9;  // Very small initial mass
+    mass_flame = mass/sparkm_ratio;  // Very small initial mass
     
     // Burned zone starts empty
     burned_zone->set_state_TPY(T, P, Y);
@@ -285,7 +286,7 @@ void Cylinder::update_combustion_zones(double dt) {
     
     // Calculate mass flow rates
     std::cout << "[DEBUG] Calculating mass flow rates..." << std::endl;
-    double mass_flow_in = std::max(1e-8,mass_burned/100); // calculate_mass_flow_into_flame();  // [kg/s]
+    double mass_flow_in = std::min(mass_flame,std::max(1e-8,mass_burned/4)); // calculate_mass_flow_into_flame();  // [kg/s]
     std::cout << "[DEBUG] mass_flow_in=" << mass_flow_in << " kg/s" << std::endl;
     
     double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
