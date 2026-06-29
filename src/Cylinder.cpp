@@ -96,10 +96,6 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
         // Mark combustion as initiated and active
         combustion_initiated = true;
         combustion_active = true;
-        
-        std::cout << "Combustion initiated: Tad = " << adiabatic_flame_temp 
-                  << " K, Target flame temp = " << target_flame_temp << " K"
-                  << ", Initial flame radius = " << flame_radius * 1000.0 << " mm" << std::endl;
     }
 }
 
@@ -240,12 +236,7 @@ double Cylinder::calculate_mass_flow_out_of_flame(double mass_flow_in) {
 }
 
 void Cylinder::update_combustion_zones(double dt) {
-    std::cout << "[DEBUG] update_combustion_zones: mass_unburned=" << mass_unburned 
-              << ", mass_flame=" << mass_flame 
-              << ", mass_burned=" << mass_burned << std::endl;
-    
     if (!combustion_active || mass_unburned <= 1e-12) {
-        std::cout << "[DEBUG] Combustion not active or no unburned mass remaining" << std::endl;
         combustion_active = false;
         instantaneous_heat_release_rate = 0.0;
         return;
@@ -285,12 +276,9 @@ void Cylinder::update_combustion_zones(double dt) {
     burned_zone->set_state_UV(u_b + delta_u, specific_volume_now);
     
     // Calculate mass flow rates
-    std::cout << "[DEBUG] Calculating mass flow rates..." << std::endl;
     double mass_flow_in = std::min(mass_flame,std::max(1e-8,mass_burned/4)); // calculate_mass_flow_into_flame();  // [kg/s]
-    std::cout << "[DEBUG] mass_flow_in=" << mass_flow_in << " kg/s" << std::endl;
     
     double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
-    std::cout << "[DEBUG] mass_flow_out=" << mass_flow_out << " kg/s" << std::endl;
 
     // Log combustion variables if logging is enabled
     static int time_step = 0;
@@ -319,14 +307,12 @@ void Cylinder::update_combustion_zones(double dt) {
     // Calculate mass transfers
     double dm_in = mass_flow_in * dt;  // [kg]
     double dm_out = mass_flow_out * dt;  // [kg]
-    std::cout << "[DEBUG] dm_in=" << dm_in << " kg, dm_out=" << dm_out << " kg" << std::endl;
     
     // Limit transfers to available mass
     dm_in = std::min(dm_in, mass_unburned);
     dm_out = std::min(dm_out, mass_flame);
     
     if (dm_in <= 0.0 && dm_out <= 0.0) {
-    	std::cout << "[DEBUG] combustion stoped by negatvie flow rate" << std::endl;
         combustion_active = false;
         instantaneous_heat_release_rate = 0.0;
         return;
@@ -375,11 +361,7 @@ void Cylinder::update_combustion_zones(double dt) {
     
     // Advance chemistry in flame zone (reactions progress here)
     if (mass_flame > 1e-12) {
-        std::cout << "[DEBUG] Advancing flame zone chemistry: T=" << flame_zone->temperature() 
-                  << " K, P=" << flame_zone->pressure() / 1e5 << " bar" << std::endl;
         flame_zone->advance_chemistry(dt);
-        std::cout << "[DEBUG] Flame zone chemistry complete: T=" << flame_zone->temperature() 
-                  << " K" << std::endl;
     }
     
     // Transfer mass from flame to burned zone
@@ -439,10 +421,7 @@ void Cylinder::update_combustion_zones(double dt) {
     // Check if combustion is complete
     if (mass_unburned < 1e-12 && mass_flame < 1e-12) {
         combustion_active = false;
-        std::cout << "[DEBUG] Combustion complete: all mass burned" << std::endl;
     }
-    
-    std::cout << "[DEBUG] update_combustion_zones complete" << std::endl;
 }
 
 void Cylinder::mix_zones_to_cylinder() {
@@ -501,10 +480,6 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
     double initial_S = gas->entropy();  // Store entropy for isentropic process
     std::vector<double> initial_Y = gas->mass_fractions();
     
-    DEBUG_CHECK_TEMPERATURE(initial_T, "Initial state");
-    DEBUG_CHECK_PRESSURE(initial_P, "Initial state");
-    DEBUG_LOG("Initial: T=" + std::to_string(initial_T) + " K, P=" + std::to_string(initial_P / 1e5) + " bar, V_ratio=" + std::to_string(volume / initial_volume));
-    
     // Advance chemistry first
     advance_chemistry(dt);
     
@@ -512,9 +487,6 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
     double T_after_chemistry = gas->temperature();
     double P_after_chemistry = gas->pressure();
     double S_after_chemistry = gas->entropy();
-    
-    DEBUG_CHECK_TEMPERATURE(T_after_chemistry, "After chemistry");
-    DEBUG_CHECK_PRESSURE(P_after_chemistry, "After chemistry");
     
     // Apply isentropic compression/expansion due to volume change
     double volume_ratio = volume / initial_volume;
@@ -534,9 +506,6 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
     // Get state after isentropic process
     double T_after_isentropic = gas->temperature();
     double P_after_isentropic = gas->pressure();
-    
-    DEBUG_CHECK_TEMPERATURE(T_after_isentropic, "After isentropic");
-    DEBUG_CHECK_PRESSURE(P_after_isentropic, "After isentropic");
     
     // Calculate heat transfer losses
     {
@@ -563,18 +532,6 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
         // Use setState_UV (internal energy, specific volume) for constant volume heat transfer
         gas->set_state_UV(specific_internal_energy, specific_volume);
             
-    }
-    
-    // Final checks
-    double final_T = gas->temperature();
-    double final_P = gas->pressure();
-    
-    DEBUG_CHECK_TEMPERATURE(final_T, "Final state");
-    DEBUG_CHECK_PRESSURE(final_P, "Final state");
-    
-    if (final_T > 5000.0) {
-        DEBUG_LOG("EXTREME TEMPERATURE DETECTED!");
-        DEBUG_LOG("Volume ratio: " + std::to_string(volume_ratio));
     }
     
     // Update previous_volume for next time step
@@ -743,24 +700,13 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
 }
 
 void Cylinder::advance_chemistry(double dt) {
-    std::cout << "[DEBUG] Cylinder::advance_chemistry called: dt=" << dt 
-              << ", combustion_active=" << combustion_active 
-              << ", combustion_initiated=" << combustion_initiated << std::endl;
-    
     // Update combustion zones if combustion is active
     if (combustion_active) {
-        std::cout << "[DEBUG] Updating combustion zones..." << std::endl;
         update_combustion_zones(dt);
-        std::cout << "[DEBUG] Mixing zones to cylinder..." << std::endl;
         mix_zones_to_cylinder();
-        std::cout << "[DEBUG] Combustion zones updated successfully" << std::endl;
     } else if (!combustion_initiated) {
         // Only advance chemistry if combustion hasn't started yet
-        std::cout << "[DEBUG] Advancing chemistry (no combustion)..." << std::endl;
         gas->advance_chemistry(dt);
-        std::cout << "[DEBUG] Chemistry advanced successfully" << std::endl;
-    } else {
-        std::cout << "[DEBUG] Skipping chemistry (combustion initiated but not active)" << std::endl;
     }
 }
 
