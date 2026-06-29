@@ -195,29 +195,6 @@ double Cylinder::calculate_mass_flow_into_flame() {
     double max_flow = mass_unburned / 1e-4;  // Don't consume all mass in 0.1 ms
     mass_flow_in = std::min(mass_flow_in, max_flow);
     
-    // Log combustion variables if logging is enabled
-    static int time_step = 0;
-    if (logging_enabled && combustion_log.is_open()) {
-        // Calculate mass_flow_out here for logging (will be recalculated in update_combustion_zones)
-        double mass_flow_out_estimate = calculate_mass_flow_out_of_flame(mass_flow_in);
-        
-        combustion_log << time_step << ","
-                       << mass_flow_in << ","
-                       << mass_flow_out_estimate << ","
-                       << rho_flame << ","
-                       << flame_radius << ","
-                       << flame_shell_thickness << ","
-                       << T_flame << ","
-                       << target_flame_temp << ","
-                       << temp_error << "\n";
-        combustion_log.flush();  // Flush after each write to ensure data is saved
-        time_step++;
-        
-        std::cout << "[COMBUSTION LOG] Step " << time_step 
-                  << ": mass_flow_in=" << mass_flow_in 
-                  << ", T_flame=" << T_flame << std::endl;
-    }
-    
     return mass_flow_in;
 }
 
@@ -307,11 +284,33 @@ void Cylinder::update_combustion_zones(double dt) {
     
     // Calculate mass flow rates
     std::cout << "[DEBUG] Calculating mass flow rates..." << std::endl;
-    double mass_flow_in = calculate_mass_flow_into_flame();  // [kg/s]
+    double mass_flow_in = std::max(1e-8,mass_burned/100); // calculate_mass_flow_into_flame();  // [kg/s]
     std::cout << "[DEBUG] mass_flow_in=" << mass_flow_in << " kg/s" << std::endl;
     
     double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
     std::cout << "[DEBUG] mass_flow_out=" << mass_flow_out << " kg/s" << std::endl;
+
+    // Log combustion variables if logging is enabled
+    static int time_step = 0;
+    if (logging_enabled && combustion_log.is_open()) {
+        double T_flame = flame_zone->temperature();
+        double rho_flame = flame_zone->density();
+        double temp_error = T_flame - target_flame_temp;
+        
+        combustion_log << time_step << ","
+                       << mass_flow_in << ","
+                       << mass_flow_out << ","
+                       << rho_flame << ","
+                       << flame_radius << ","
+                       << flame_shell_thickness << ","
+                       << T_flame << ","
+                       << target_flame_temp << ","
+                       << temp_error << "\n";
+        combustion_log.flush();  // Flush after each write to ensure data is saved
+        time_step++;
+        
+    }
+    
     
     // Calculate mass transfers
     double dm_in = mass_flow_in * dt;  // [kg]
