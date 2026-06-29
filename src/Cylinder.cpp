@@ -56,7 +56,8 @@ void Cylinder::enable_combustion_logging(const std::string& filename) {
         logging_enabled = true;
         // Write CSV header
         combustion_log << "time_step,mass_flow_in,mass_flow_out,rho_flame,flame_radius,"
-                       << "flame_shell_thickness,T_flame,target_flame_temp,temp_error\n";
+                       << "flame_shell_thickness,T_flame,target_flame_temp,temp_error,"
+                       << "mass_unburned,mass_burned\n";
         combustion_log << std::scientific << std::setprecision(6);
         combustion_log.flush();  // Ensure header is written immediately
         std::cout << "Combustion logging enabled: " << filename << std::endl;
@@ -305,7 +306,9 @@ void Cylinder::update_combustion_zones(double dt) {
                        << flame_shell_thickness << ","
                        << T_flame << ","
                        << target_flame_temp << ","
-                       << temp_error << "\n";
+                       << temp_error << ","
+                       << mass_unburned << ","
+                       << mass_burned << "\n";
         combustion_log.flush();  // Flush after each write to ensure data is saved
         time_step++;
         
