@@ -469,7 +469,18 @@ void Cylinder::mix_zones_to_cylinder() {
     // Re-apply UV constraint to maintain energy and volume with new composition
     gas->set_state_UV(u_avg, v_specific);
 
-    std::cout << "gas_gamma : " << gas->gamma() << " gas_pressure : " << gas->pressure() <<  " gas_YH2O : " << gas->mass_fractions()[gas->species_names()=='H2O'] << std::endl;
+    // Find H2O species index
+    auto species_names = gas->species_names();
+    auto mass_fractions = gas->mass_fractions();
+    size_t h2o_index = 0;
+    for (size_t i = 0; i < species_names.size(); ++i) {
+        if (species_names[i] == "H2O") {
+            h2o_index = i;
+            break;
+        }
+    }
+    std::cout << "gas_gamma : " << gas->gamma() << " gas_pressure : " << gas->pressure() 
+              << " gas_YH2O : " << mass_fractions[h2o_index] << std::endl;
 }
 
 void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
