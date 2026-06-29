@@ -276,9 +276,9 @@ void Cylinder::update_combustion_zones(double dt) {
     burned_zone->set_state_UV(u_b + delta_u, specific_volume_now);
     
     // Calculate mass flow rates
-    double mass_flow_in = std::min(mass_flame,std::max(1e-8,mass_burned/4)); // calculate_mass_flow_into_flame();  // [kg/s]
+    double mass_flow_in = std::min(mass_flame/dt,std::max(1e-8/dt,mass_burned/400/dt)); // calculate_mass_flow_into_flame();  // [kg/s]
     
-    double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
+    double mass_flow_out = mass_flow_in; //calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
 
     // Log combustion variables if logging is enabled
     static int time_step = 0;
@@ -468,6 +468,8 @@ void Cylinder::mix_zones_to_cylinder() {
     
     // Re-apply UV constraint to maintain energy and volume with new composition
     gas->set_state_UV(u_avg, v_specific);
+
+    std::cout << "gas_gamma : " << gas->gamma() << " gas_pressure : " << gas->pressure() <<  " gas_YH2O : " << gas->mass_fractions()[gas->species_names()=='H2O'] << std::endl;
 }
 
 void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
