@@ -720,6 +720,10 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
     // Update mass
     mass = new_mass;
     
+    // Reset combustion state when mass is removed (exhaust valve open)
+    combustion_initiated = false;
+    combustion_active = false;
+    
     try {
         // Set state using enthalpy and pressure
         double current_pressure = gas->pressure();
