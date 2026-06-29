@@ -102,7 +102,7 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
 void Cylinder::initialize_combustion_zones() {
     // Initialize all zones with current cylinder state
     double T = gas->temperature();
-    double T_spark = 2000; 
+    double T_spark = 4000; 
     double T_ign = T_spark;
     double sparkm_ratio = 0.01;
     double P = gas->pressure();
@@ -114,7 +114,7 @@ void Cylinder::initialize_combustion_zones() {
     
     // Flame zone starts with a small initial kernel
     flame_zone->set_state_TPY(T_ign, P, Y);
-    mass_flame = mass/sparkm_ratio;  // Very small initial mass
+    mass_flame = mass*sparkm_ratio;  // Very small initial mass
     
     // Burned zone starts empty
     burned_zone->set_state_TPY(T, P, Y);
@@ -278,7 +278,7 @@ void Cylinder::update_combustion_zones(double dt) {
     // Calculate mass flow rates
     double mass_flow_in = std::min(mass_flame/dt,std::max(1e-8/dt,mass_burned/400/dt)); // calculate_mass_flow_into_flame();  // [kg/s]
     
-    double mass_flow_out = mass_flow_in; //calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
+    double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
 
     // Log combustion variables if logging is enabled
     static int time_step = 0;
@@ -412,10 +412,8 @@ void Cylinder::update_combustion_zones(double dt) {
     double heat_release = total_enthalpy_final - total_enthalpy_initial;  // [J]
     instantaneous_heat_release_rate = heat_release / dt;  // [W]
     
-    // Update flame radius based on burned volume
-    double total_volume = volume;
-    double burned_volume_fraction = mass_burned / mass;
-    double burned_volume = total_volume * burned_volume_fraction;
+    // Update flame radius based on burned mass
+    double burned_volume = mass_burned / burned_zone->density();
     flame_radius = std::pow(3.0 * burned_volume / (4.0 * M_PI), 1.0/3.0);
     
     // Check if combustion is complete
@@ -433,6 +431,13 @@ void Cylinder::mix_zones_to_cylinder() {
     }
     
     double total_mass = mass_unburned + mass_flame + mass_burned;
+    std::cout << "total mass : " << total_mass  
+	      << " mass : " << mass
+	      << " unburned u : " << unburned_zone->internal_energy()
+	      << " burned u : " << burned_zone->internal_energy()
+	      << " flame u : " << flame_zone->internal_energy()
+	      << " gas u : " << gas->internal_energy() 
+      << std::endl;
     
     if (total_mass < 1e-12) {
         return;
@@ -456,31 +461,15 @@ void Cylinder::mix_zones_to_cylinder() {
     // Calculate specific volume
     double v_specific = volume / total_mass;
     
+    // Update composition to match mass-weighted average
+    // We need to set correct species distribution
+    gas->set_state_TPY(300.0, 1.0e6, Y_avg);
+    
     // Set cylinder state using internal energy and specific volume
     // This allows pressure to naturally emerge from the thermodynamic state
-    gas->set_state_UV(u_avg, v_specific);
-    
-    // Update composition to match mass-weighted average
-    // We need to do this after setting UV to ensure correct species distribution
-    double T_current = gas->temperature();
-    double P_current = gas->pressure();
-    gas->set_state_TPY(T_current, P_current, Y_avg);
-    
     // Re-apply UV constraint to maintain energy and volume with new composition
     gas->set_state_UV(u_avg, v_specific);
 
-    // Find H2O species index
-    auto species_names = gas->species_names();
-    auto mass_fractions = gas->mass_fractions();
-    size_t h2o_index = 0;
-    for (size_t i = 0; i < species_names.size(); ++i) {
-        if (species_names[i] == "H2O") {
-            h2o_index = i;
-            break;
-        }
-    }
-    std::cout << "gas_gamma : " << gas->gamma() << " gas_pressure : " << gas->pressure() 
-              << " gas_YH2O : " << mass_fractions[h2o_index] << std::endl;
 }
 
 void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
