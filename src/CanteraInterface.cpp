@@ -43,7 +43,10 @@ void CanteraInterface::advance_chemistry(double dt) {
     }
     
     try {
-        // Reinitialize the reactor network to pick up current state changes
+        // Synchronize reactor state with current thermo state
+        reactor->syncState();
+        
+        // Reinitialize the reactor network to pick up the synchronized state
         reactor_net->reinitialize();
         
         // Advance the reactor network
