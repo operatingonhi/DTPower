@@ -231,6 +231,10 @@ void Engine::initialize_cycle() {
     double initial_volume = cylinder->get_volume();
     cylinder->set_mass(initial_density * initial_volume);
     
+    // Initialize previous state for combustion zone tracking
+    // This is done in update_thermodynamics, but we need initial values
+    // The first call to update_thermodynamics will set these properly
+    
     // Get species names for CSV header (only need to do this once)
     if (results.species_names.empty()) {
         results.species_names = cylinder->get_gas()->species_names();

@@ -53,6 +53,10 @@ private:
     double current_heat_transfer_rate;  // Current heat transfer rate [W]
     double instantaneous_heat_release_rate;  // Heat release rate from instantaneous combustion [W]
     
+    // Store previous state for combustion zone updates
+    double previous_u;  // Previous specific internal energy [J/kg]
+    double previous_P;  // Previous pressure [Pa]
+    
     // CSV logging for combustion diagnostics
     std::ofstream combustion_log;
     bool logging_enabled;
