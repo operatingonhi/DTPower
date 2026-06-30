@@ -63,6 +63,7 @@ void CanteraInterface::advance_chemistry(double dt) {
                   << std::endl;
         
         reactor_net->advance(t0 + dt);
+	//thermo->equilibrate("HP");
         
         auto& contents = reactor->contents();
         std::cout << "[DEBUG] reactor contents after T=" << contents.temperature() 
