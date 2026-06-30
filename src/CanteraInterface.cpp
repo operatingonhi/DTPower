@@ -43,6 +43,9 @@ void CanteraInterface::advance_chemistry(double dt) {
     }
     
     try {
+        // Reinitialize the reactor network to pick up current state changes
+        reactor_net->reinitialize();
+        
         // Advance the reactor network
         double t0 = reactor_net->time();
         
@@ -63,7 +66,6 @@ void CanteraInterface::advance_chemistry(double dt) {
                   << std::endl;
         
         reactor_net->advance(t0 + dt);
-	//thermo->equilibrate("HP");
         
         auto& contents = reactor->contents();
         std::cout << "[DEBUG] reactor contents after T=" << contents.temperature() 
