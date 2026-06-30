@@ -12,8 +12,8 @@ CanteraInterface::CanteraInterface(const std::string& mechanism_file) {
         thermo = gas->thermo().get();
         kinetics = gas->kinetics().get();
         
-        // Initialize reactor for chemistry integration with clone=true to avoid deprecation warning
-        reactor = std::make_unique<Cantera::IdealGasReactor>(gas, true);
+        // Initialize reactor for chemistry integration with clone=false to share the solution
+        reactor = std::make_unique<Cantera::IdealGasReactor>(gas, false);
         
         // Initialize reactor net with shared_ptr to reactor to avoid deprecation warning
         // Create a shared_ptr that doesn't own the reactor (non-owning shared_ptr)
@@ -43,45 +43,44 @@ void CanteraInterface::advance_chemistry(double dt) {
     }
     
     try {
-        // Set reactor state to current thermo state
-        reactor->syncState();
-        
         // Advance the reactor network
         double t0 = reactor_net->time();
-        //thermo->equilibrate("HP");
-	auto& precontents = reactor->contents();
-	std::cout << "\n[DEBUG] reactor contents before T=" << precontents.temperature() 
-	          << " Y[0]=" << precontents.massFraction(0) 
-	          << " Y[2]=" << precontents.massFraction(2) 
-	          << " Y[3]=" << precontents.massFraction(3) 
-	          << " Y[4]=" << precontents.massFraction(4) 
-	          << " Y[5]=" << precontents.massFraction(5) 
-		  << std::endl;
-	std::cout << "[DEBUG] external thermo before T=" << thermo->temperature() 
-	          << " Y[0]=" << thermo->massFraction(0) 
-	          << " Y[2]=" << thermo->massFraction(2) 
-	          << " Y[3]=" << thermo->massFraction(3) 
-	          << " Y[4]=" << thermo->massFraction(4) 
-	          << " Y[5]=" << thermo->massFraction(5) 
-		  << std::endl;
-        reactor_net->advance(t0 + dt);
-	auto& contents = reactor->contents();
-	std::cout << "[DEBUG] reactor contents T=" << contents.temperature() 
-	          << " Y[0]=" << contents.massFraction(0) 
-	          << " Y[2]=" << contents.massFraction(2) 
-	          << " Y[3]=" << contents.massFraction(3) 
-	          << " Y[4]=" << contents.massFraction(4) 
-	          << " Y[5]=" << contents.massFraction(5) 
-		  << std::endl;
-	std::cout << "[DEBUG] external thermo T=" << thermo->temperature() 
-	          << " Y[0]=" << thermo->massFraction(0) 
-	          << " Y[2]=" << thermo->massFraction(2) 
-	          << " Y[3]=" << thermo->massFraction(3) 
-	          << " Y[4]=" << thermo->massFraction(4) 
-	          << " Y[5]=" << thermo->massFraction(5) 
-		  << std::endl;
         
-        // The reactor automatically updates the gas state
+        auto& precontents = reactor->contents();
+        std::cout << "\n[DEBUG] reactor contents before T=" << precontents.temperature() 
+                  << " Y[0]=" << precontents.massFraction(0) 
+                  << " Y[2]=" << precontents.massFraction(2) 
+                  << " Y[3]=" << precontents.massFraction(3) 
+                  << " Y[4]=" << precontents.massFraction(4) 
+                  << " Y[5]=" << precontents.massFraction(5) 
+                  << std::endl;
+        std::cout << "[DEBUG] external thermo before T=" << thermo->temperature() 
+                  << " Y[0]=" << thermo->massFraction(0) 
+                  << " Y[2]=" << thermo->massFraction(2) 
+                  << " Y[3]=" << thermo->massFraction(3) 
+                  << " Y[4]=" << thermo->massFraction(4) 
+                  << " Y[5]=" << thermo->massFraction(5) 
+                  << std::endl;
+        
+        reactor_net->advance(t0 + dt);
+        
+        auto& contents = reactor->contents();
+        std::cout << "[DEBUG] reactor contents after T=" << contents.temperature() 
+                  << " Y[0]=" << contents.massFraction(0) 
+                  << " Y[2]=" << contents.massFraction(2) 
+                  << " Y[3]=" << contents.massFraction(3) 
+                  << " Y[4]=" << contents.massFraction(4) 
+                  << " Y[5]=" << contents.massFraction(5) 
+                  << std::endl;
+        std::cout << "[DEBUG] external thermo after T=" << thermo->temperature() 
+                  << " Y[0]=" << thermo->massFraction(0) 
+                  << " Y[2]=" << thermo->massFraction(2) 
+                  << " Y[3]=" << thermo->massFraction(3) 
+                  << " Y[4]=" << thermo->massFraction(4) 
+                  << " Y[5]=" << thermo->massFraction(5) 
+                  << std::endl;
+        
+        // The reactor automatically updates the gas state when clone=false
         
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] Cantera reactor integration failed: " << e.what() << std::endl;
