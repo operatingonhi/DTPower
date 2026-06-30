@@ -52,39 +52,7 @@ void CanteraInterface::advance_chemistry(double dt) {
         // Advance the reactor network
         double t0 = reactor_net->time();
         
-        auto& precontents = reactor->contents();
-        std::cout << "\n[DEBUG] reactor contents before T=" << precontents.temperature() 
-                  << " Y[0]=" << precontents.massFraction(0) 
-                  << " Y[2]=" << precontents.massFraction(2) 
-                  << " Y[3]=" << precontents.massFraction(3) 
-                  << " Y[4]=" << precontents.massFraction(4) 
-                  << " Y[5]=" << precontents.massFraction(5) 
-                  << std::endl;
-        std::cout << "[DEBUG] external thermo before T=" << thermo->temperature() 
-                  << " Y[0]=" << thermo->massFraction(0) 
-                  << " Y[2]=" << thermo->massFraction(2) 
-                  << " Y[3]=" << thermo->massFraction(3) 
-                  << " Y[4]=" << thermo->massFraction(4) 
-                  << " Y[5]=" << thermo->massFraction(5) 
-                  << std::endl;
-        
         reactor_net->advance(t0 + dt);
-        
-        auto& contents = reactor->contents();
-        std::cout << "[DEBUG] reactor contents after T=" << contents.temperature() 
-                  << " Y[0]=" << contents.massFraction(0) 
-                  << " Y[2]=" << contents.massFraction(2) 
-                  << " Y[3]=" << contents.massFraction(3) 
-                  << " Y[4]=" << contents.massFraction(4) 
-                  << " Y[5]=" << contents.massFraction(5) 
-                  << std::endl;
-        std::cout << "[DEBUG] external thermo after T=" << thermo->temperature() 
-                  << " Y[0]=" << thermo->massFraction(0) 
-                  << " Y[2]=" << thermo->massFraction(2) 
-                  << " Y[3]=" << thermo->massFraction(3) 
-                  << " Y[4]=" << thermo->massFraction(4) 
-                  << " Y[5]=" << thermo->massFraction(5) 
-                  << std::endl;
         
         // The reactor automatically updates the gas state when clone=false
         

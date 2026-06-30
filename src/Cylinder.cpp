@@ -102,9 +102,9 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
 void Cylinder::initialize_combustion_zones() {
     // Initialize all zones with current cylinder state
     double T = gas->temperature();
-    double T_spark = 4000; 
+    double T_spark = 2000; 
     double T_ign = T_spark;
-    double sparkm_ratio = 0.01;
+    double sparkm_ratio = 0.001;
     double P = gas->pressure();
     std::vector<double> Y = gas->mass_fractions();
     
@@ -255,28 +255,29 @@ void Cylinder::update_combustion_zones(double dt) {
     double specific_volume_before = previous_volume / mass;  // [m³/kg]
     double specific_volume_now = volume / mass;  // [m³/kg]
     double delta_u = u_gas_before - gas->internal_energy();  // [J/kg]
+    std::cout << "delta_u : " << delta_u << " ratio: " << delta_u/u_gas_before << " u: " << u_gas_before << std::endl;
     
     // Update all zones with new pressure AND internal energy change
     double T_u = unburned_zone->temperature();
     std::vector<double> Y_u = unburned_zone->mass_fractions();
     double u_u = unburned_zone->internal_energy();
-    double v_u = 1.0 / unburned_zone->density();
-    unburned_zone->set_state_UV(u_u + delta_u, specific_volume_now);
+    double v_u = mass_unburned * 1.0 / unburned_zone->density();
+    unburned_zone->set_state_UV(u_u + delta_u, v_u*volume/previous_volume);
     
     double T_f = flame_zone->temperature();
     std::vector<double> Y_f = flame_zone->mass_fractions();
     double u_f = flame_zone->internal_energy();
     double v_f = 1.0 / flame_zone->density();
-    flame_zone->set_state_UV(u_f + delta_u, specific_volume_now);
+    flame_zone->set_state_UV(u_f + delta_u, v_f*volume/previous_volume);
     
     double T_b = burned_zone->temperature();
     std::vector<double> Y_b = burned_zone->mass_fractions();
     double u_b = burned_zone->internal_energy();
     double v_b = 1.0 / burned_zone->density();
-    burned_zone->set_state_UV(u_b + delta_u, specific_volume_now);
+    burned_zone->set_state_UV(u_b + delta_u, v_b*volume/previous_volume);
     
     // Calculate mass flow rates
-    double mass_flow_in = std::min(mass_flame/dt,std::max(1e-8/dt,mass_burned/400/dt)); // calculate_mass_flow_into_flame();  // [kg/s]
+    double mass_flow_in = std::min(mass_flame/dt,std::max(1e-8/dt,mass_burned/40/dt)); // calculate_mass_flow_into_flame();  // [kg/s]
     
     double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
 
@@ -431,13 +432,6 @@ void Cylinder::mix_zones_to_cylinder() {
     }
     
     double total_mass = mass_unburned + mass_flame + mass_burned;
-    std::cout << "total mass : " << total_mass  
-	      << " mass : " << mass
-	      << " unburned u : " << unburned_zone->internal_energy()
-	      << " burned u : " << burned_zone->internal_energy()
-	      << " flame u : " << flame_zone->internal_energy()
-	      << " gas u : " << gas->internal_energy() 
-      << std::endl;
     
     if (total_mass < 1e-12) {
         return;
@@ -708,7 +702,7 @@ void Cylinder::advance_chemistry(double dt) {
         mix_zones_to_cylinder();
     } else if (!combustion_initiated) {
         // Only advance chemistry if combustion hasn't started yet
-        gas->advance_chemistry(dt);
+        //gas->advance_chemistry(dt);
     }
 }
 
