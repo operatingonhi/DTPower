@@ -281,16 +281,21 @@ void Cylinder::update_combustion_zones(double dt) {
     std::vector<double> Y_u = unburned_zone->mass_fractions();
     double rho_u = unburned_zone->density();
     unburned_zone->set_state_DP((rho_u/volume*previous_volume),P);
+    rho_u = unburned_zone->density();
     
     double T_f = flame_zone->temperature();
     std::vector<double> Y_f = flame_zone->mass_fractions();
     double rho_f = flame_zone->density();
-    //flame_zone->set_state_DP((rho_f/volume*previous_volume),P);
+    flame_zone->set_state_DP((rho_f/volume*previous_volume),P);
+    rho_f = flame_zone->density();
     
     double T_b = burned_zone->temperature();
     std::vector<double> Y_b = burned_zone->mass_fractions();
     double rho_b = burned_zone->density();
-    //burned_zone->set_state_DP((rho_b/volume*previous_volume),P);
+    burned_zone->set_state_DP((rho_b/volume*previous_volume),P);
+    rho_b = burned_zone->density();
+
+    std::cout << "volume " << volume << "mass_unburned/rho_u + mass_burned/rho_b + mass_flame/rho_f " << mass_unburned/rho_u + mass_burned/rho_b + mass_flame/rho_f << std::endl;
     
     // Calculate mass flow rates
     double mass_flow_in = calculate_mass_flow_into_flame(dt);  // [kg/s]
@@ -398,8 +403,8 @@ void Cylinder::update_combustion_zones(double dt) {
     // Advance chemistry in flame zone (reactions progress here)
     if (mass_flame > 1e-12) {
         flame_zone->advance_chemistry(dt);
-        //burned_zone->advance_chemistry(dt);
-        //unburned_zone->advance_chemistry(dt);
+        burned_zone->advance_chemistry(dt);
+        unburned_zone->advance_chemistry(dt);
     }
     
     
