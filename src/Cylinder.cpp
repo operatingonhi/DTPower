@@ -181,13 +181,13 @@ double Cylinder::calculate_mass_flow_into_flame() {
     
     // Modulate mass flow based on temperature error
     // Use proportional control with gain
-    double control_gain = 0.1;  // Tuning parameter
+    double control_gain = 0.75;  // Tuning parameter
     double temp_factor = 1.0 - control_gain * (temp_error / target_flame_temp);
     
     // Clamp temperature factor to reasonable range
-    temp_factor = std::max(0.1, std::min(temp_factor, 2.0));
+    temp_factor = std::max(0.1, std::min(temp_factor, 2000.0));
     
-    double mass_flow_in = base_mass_flow * temp_factor;
+    double mass_flow_in = base_mass_flow * temp_factor * 100;
     
     // Limit mass flow to available unburned mass
     double max_flow = mass_unburned / 1e-4;  // Don't consume all mass in 0.1 ms
@@ -255,29 +255,28 @@ void Cylinder::update_combustion_zones(double dt) {
     double specific_volume_before = previous_volume / mass;  // [m³/kg]
     double specific_volume_now = volume / mass;  // [m³/kg]
     double delta_u = u_gas_before - gas->internal_energy();  // [J/kg]
-    std::cout << "delta_u : " << delta_u << " ratio: " << delta_u/u_gas_before << " u: " << u_gas_before << std::endl;
     
     // Update all zones with new pressure AND internal energy change
     double T_u = unburned_zone->temperature();
     std::vector<double> Y_u = unburned_zone->mass_fractions();
     double u_u = unburned_zone->internal_energy();
-    double v_u = mass_unburned * 1.0 / unburned_zone->density();
-    unburned_zone->set_state_UV(u_u + delta_u, v_u*volume/previous_volume);
+    double v_u = 1.0 / unburned_zone->density();
+    unburned_zone->set_state_UV(u_u*previous_volume/volume, v_u*volume/previous_volume);
     
     double T_f = flame_zone->temperature();
     std::vector<double> Y_f = flame_zone->mass_fractions();
     double u_f = flame_zone->internal_energy();
     double v_f = 1.0 / flame_zone->density();
-    flame_zone->set_state_UV(u_f + delta_u, v_f*volume/previous_volume);
+    flame_zone->set_state_UV(u_f*previous_volume/volume, v_f*volume/previous_volume);
     
     double T_b = burned_zone->temperature();
     std::vector<double> Y_b = burned_zone->mass_fractions();
     double u_b = burned_zone->internal_energy();
     double v_b = 1.0 / burned_zone->density();
-    burned_zone->set_state_UV(u_b + delta_u, v_b*volume/previous_volume);
+    burned_zone->set_state_UV(u_b*previous_volume/volume, v_b*volume/previous_volume);
     
     // Calculate mass flow rates
-    double mass_flow_in = std::min(mass_flame/dt,std::max(1e-8/dt,mass_burned/40/dt)); // calculate_mass_flow_into_flame();  // [kg/s]
+    double mass_flow_in = calculate_mass_flow_into_flame();  // [kg/s]
     
     double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
 
@@ -363,6 +362,8 @@ void Cylinder::update_combustion_zones(double dt) {
     // Advance chemistry in flame zone (reactions progress here)
     if (mass_flame > 1e-12) {
         flame_zone->advance_chemistry(dt);
+        burned_zone->advance_chemistry(dt);
+        unburned_zone->advance_chemistry(dt);
     }
     
     // Transfer mass from flame to burned zone
