@@ -143,7 +143,7 @@ void Cylinder::calculate_adiabatic_flame_temperature() {
 }
 
 double Cylinder::calculate_mass_flow_into_flame() {
-    // Calculate mass flow rate into flame zone based on temperature control
+    // Calculate mass flow rate into flame zone based on thermal mass balance
     // Target: maintain flame zone at target_flame_temp (0.75 * Tad)
     
     if (mass_unburned <= 1e-12) {
@@ -155,39 +155,50 @@ double Cylinder::calculate_mass_flow_into_flame() {
     target_flame_temp = flame_temp_fraction * adiabatic_flame_temp;
     
     double T_flame = flame_zone->temperature();
-    double rho_flame = flame_zone->density();
+    double T_unburned = unburned_zone->temperature();
     
-    // Control mass flow based on temperature deviation
-    // If flame is too cold, reduce mass flow; if too hot, increase mass flow
+    // Temperature error: positive means flame is too hot, negative means too cold
     double temp_error = T_flame - target_flame_temp;
     
-    // Base mass flow rate from flame shell geometry
-    // Inner radius of flame shell
-    double r_inner = flame_radius;
-    // Outer radius of flame shell
-    double r_outer = flame_radius + flame_shell_thickness;
+    // Get thermal properties
+    double cp_flame = flame_zone->cp();  // Specific heat of flame zone [J/(kg·K)]
+    double cp_unburned = unburned_zone->cp();  // Specific heat of unburned zone [J/(kg·K)]
     
-    // Volume of flame shell
-    double V_shell = (4.0/3.0) * M_PI * (r_outer*r_outer*r_outer - r_inner*r_inner*r_inner);
+    // Thermal mass of flame zone [J/K]
+    double thermal_mass_flame = mass_flame * cp_flame;
     
-    // Estimate characteristic time for flame to traverse shell thickness
-    // Use a characteristic velocity based on thermal diffusivity
-    double alpha = 1e-4;  // Thermal diffusivity [m²/s], typical for gases
+    // Energy needed to correct temperature error [J]
+    // Negative energy_needed means we need to cool the flame (add cold gas)
+    // Positive energy_needed means we need to heat the flame (add less gas or hotter gas)
+    double energy_needed = -thermal_mass_flame * temp_error;
+    
+    // Energy per unit mass that incoming unburned gas can provide [J/kg]
+    // This is the enthalpy difference between unburned and flame temperatures
+    double energy_per_kg = cp_unburned * (T_unburned - T_flame);
+    
+    // Characteristic time scale for mass flow [s]
+    // Based on thermal diffusivity and flame shell thickness
+    double alpha = 1e-4;  // Thermal diffusivity [m²/s]
     double characteristic_time = flame_shell_thickness * flame_shell_thickness / alpha;
     
-    // Base mass flow rate to maintain shell
-    double rho_u = unburned_zone->density();
-    double base_mass_flow = rho_u * V_shell / characteristic_time;  // [kg/s]
+    // Calculate mass flow rate needed to provide the required energy over characteristic time
+    double mass_flow_in = 0.0;
     
-    // Modulate mass flow based on temperature error
-    // Use proportional control with gain
-    double control_gain = 0.75;  // Tuning parameter
-    double temp_factor = 1.0 - control_gain * (temp_error / target_flame_temp);
+    if (std::abs(energy_per_kg) > 1e-6) {
+        // Mass flow rate [kg/s] = Energy rate [J/s] / Energy per kg [J/kg]
+        double energy_rate = energy_needed / characteristic_time;  // [J/s]
+        mass_flow_in = energy_rate / energy_per_kg;  // [kg/s]
+    } else {
+        // Fallback: if temperature difference is negligible, use geometric estimate
+        double r_inner = flame_radius;
+        double r_outer = flame_radius + flame_shell_thickness;
+        double V_shell = (4.0/3.0) * M_PI * (r_outer*r_outer*r_outer - r_inner*r_inner*r_inner);
+        double rho_u = unburned_zone->density();
+        mass_flow_in = rho_u * V_shell / characteristic_time;
+    }
     
-    // Clamp temperature factor to reasonable range
-    temp_factor = std::max(0.1, std::min(temp_factor, 2000.0));
-    
-    double mass_flow_in = base_mass_flow * temp_factor * 100;
+    // Ensure non-negative mass flow
+    mass_flow_in = std::max(0.0, mass_flow_in);
     
     // Limit mass flow to available unburned mass
     double max_flow = mass_unburned / 1e-4;  // Don't consume all mass in 0.1 ms
