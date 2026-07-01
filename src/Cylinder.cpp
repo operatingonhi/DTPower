@@ -104,7 +104,7 @@ void Cylinder::initialize_combustion_zones() {
     double T = gas->temperature();
     double T_spark = 2000; 
     double T_ign = T_spark;
-    double sparkm_ratio = 0.001;
+    double sparkm_ratio = 0.0001;
     double P = gas->pressure();
     std::vector<double> Y = gas->mass_fractions();
     
