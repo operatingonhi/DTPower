@@ -276,32 +276,21 @@ void Cylinder::update_combustion_zones(double dt) {
     // Get current pressure after volume change (from main gas object)
     double P = gas->pressure();
     
-    // Calculate change in specific internal energy
-    // based on specific heats of constituent gases
-    
-    double u_u = unburned_zone->internal_energy();
-    double u_f = flame_zone->internal_energy();
-    double u_b = burned_zone->internal_energy();
-    double total_mass = mass_unburned + mass_flame + mass_burned;
-    double u_previous = (u_u * mass_unburned + u_f * mass_flame + u_b * mass_burned) / total_mass;
-    double u_delta = u_previous - gas->internal_energy();
-
-
-    // Update all zones with new pressure AND internal energy change
+    // Update all zones with new pressure AND specific volume change
     double T_u = unburned_zone->temperature();
     std::vector<double> Y_u = unburned_zone->mass_fractions();
     double v_u = 1.0 / unburned_zone->density();
-    unburned_zone->set_state_UV(u_u*previous_volume/volume, v_u*volume/previous_volume);
+    unburned_zone->set_state_PV(P, v_u*volume/previous_volume);
     
     double T_f = flame_zone->temperature();
     std::vector<double> Y_f = flame_zone->mass_fractions();
     double v_f = 1.0 / flame_zone->density();
-    flame_zone->set_state_UV(u_f*previous_volume/volume, v_f*volume/previous_volume);
+    flame_zone->set_state_PV(P, v_f*volume/previous_volume);
     
     double T_b = burned_zone->temperature();
     std::vector<double> Y_b = burned_zone->mass_fractions();
     double v_b = 1.0 / burned_zone->density();
-    burned_zone->set_state_UV(u_b*previous_volume/volume, v_b*volume/previous_volume);
+    burned_zone->set_state_PV(P, v_b*volume/previous_volume);
     
     // Calculate mass flow rates
     double mass_flow_in = calculate_mass_flow_into_flame(dt);  // [kg/s]
