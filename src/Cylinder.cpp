@@ -699,7 +699,65 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
 void Cylinder::advance_chemistry(double dt) {
     // Update combustion zones if combustion is active
     if (combustion_active) {
+        // Store initial states for debugging
+        double T_u_before = unburned_zone->temperature();
+        double T_f_before = flame_zone->temperature();
+        double T_b_before = burned_zone->temperature();
+        
+        auto Y_u_before = unburned_zone->mass_fractions();
+        auto Y_f_before = flame_zone->mass_fractions();
+        auto Y_b_before = burned_zone->mass_fractions();
+        
+        // Find H2O species index
+        auto species_names = gas->species_names();
+        size_t h2o_index = 0;
+        for (size_t i = 0; i < species_names.size(); ++i) {
+            if (species_names[i] == "H2O") {
+                h2o_index = i;
+                break;
+            }
+        }
+        
+        double h2o_u_before = Y_u_before[h2o_index];
+        double h2o_f_before = Y_f_before[h2o_index];
+        double h2o_b_before = Y_b_before[h2o_index];
+        
         update_combustion_zones(dt);
+        
+        // Get final states for debugging
+        double T_u_after = unburned_zone->temperature();
+        double T_f_after = flame_zone->temperature();
+        double T_b_after = burned_zone->temperature();
+        
+        auto Y_u_after = unburned_zone->mass_fractions();
+        auto Y_f_after = flame_zone->mass_fractions();
+        auto Y_b_after = burned_zone->mass_fractions();
+        
+        double h2o_u_after = Y_u_after[h2o_index];
+        double h2o_f_after = Y_f_after[h2o_index];
+        double h2o_b_after = Y_b_after[h2o_index];
+        
+        // Print debug information
+        std::cout << "=== Combustion Zone Changes (dt=" << dt << " s) ===" << std::endl;
+        std::cout << "Unburned Zone:" << std::endl;
+        std::cout << "  T: " << T_u_before << " K -> " << T_u_after << " K (ΔT = " 
+                  << (T_u_after - T_u_before) << " K)" << std::endl;
+        std::cout << "  H2O: " << h2o_u_before << " -> " << h2o_u_after 
+                  << " (Δ = " << (h2o_u_after - h2o_u_before) << ")" << std::endl;
+        
+        std::cout << "Flame Zone:" << std::endl;
+        std::cout << "  T: " << T_f_before << " K -> " << T_f_after << " K (ΔT = " 
+                  << (T_f_after - T_f_before) << " K)" << std::endl;
+        std::cout << "  H2O: " << h2o_f_before << " -> " << h2o_f_after 
+                  << " (Δ = " << (h2o_f_after - h2o_f_before) << ")" << std::endl;
+        
+        std::cout << "Burned Zone:" << std::endl;
+        std::cout << "  T: " << T_b_before << " K -> " << T_b_after << " K (ΔT = " 
+                  << (T_b_after - T_b_before) << " K)" << std::endl;
+        std::cout << "  H2O: " << h2o_b_before << " -> " << h2o_b_after 
+                  << " (Δ = " << (h2o_b_after - h2o_b_before) << ")" << std::endl;
+        std::cout << std::endl;
+        
         mix_zones_to_cylinder();
     } else if (!combustion_initiated) {
         // Only advance chemistry if combustion hasn't started yet
