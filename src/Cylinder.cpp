@@ -279,18 +279,18 @@ void Cylinder::update_combustion_zones(double dt) {
     // Update all zones with new pressure AND specific volume change
     double T_u = unburned_zone->temperature();
     std::vector<double> Y_u = unburned_zone->mass_fractions();
-    double v_u = 1.0 / unburned_zone->density();
-    unburned_zone->set_state_PV(P, v_u*volume/previous_volume);
+    double rho_u = unburned_zone->density();
+    unburned_zone->set_state_DP((rho_u/volume*previous_volume),P);
     
     double T_f = flame_zone->temperature();
     std::vector<double> Y_f = flame_zone->mass_fractions();
-    double v_f = 1.0 / flame_zone->density();
-    flame_zone->set_state_PV(P, v_f*volume/previous_volume);
+    double rho_f = flame_zone->density();
+    //flame_zone->set_state_DP((rho_f/volume*previous_volume),P);
     
     double T_b = burned_zone->temperature();
     std::vector<double> Y_b = burned_zone->mass_fractions();
-    double v_b = 1.0 / burned_zone->density();
-    burned_zone->set_state_PV(P, v_b*volume/previous_volume);
+    double rho_b = burned_zone->density();
+    //burned_zone->set_state_DP((rho_b/volume*previous_volume),P);
     
     // Calculate mass flow rates
     double mass_flow_in = calculate_mass_flow_into_flame(dt);  // [kg/s]
