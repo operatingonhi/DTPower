@@ -31,7 +31,25 @@ Cylinder::Cylinder(double cylinder_bore, double cylinder_stroke, double clearanc
 }
 
 void Cylinder::set_volume(double new_volume) {
+    
+    // Apply isentropic compression/expansion due to volume change
+    double volume_ratio = new_volume / volume;
+    
+    if (std::abs(volume_ratio - 1.0) > 0.0) {
+        PROFILE_SCOPE("isentropic_process");
+        
+        // Apply isentropic compression/expansion from the post-chemistry state
+        // The entropy after chemistry already includes chemical reaction effects
+        double new_density = mass / new_volume;
+        double specific_volume = 1.0 / new_density;
+        
+        // Use Cantera's setState_SV (entropy, specific volume) to maintain isentropic process
+	double temp_pre = gas->temperature();
+        gas->set_state_SV(gas->entropy(), specific_volume);
+    }
+    previous_volume = volume;
     volume = new_volume;
+    
 }
 
 void Cylinder::set_wall_temperature(double T_wall) {
@@ -104,7 +122,7 @@ void Cylinder::initialize_combustion_zones() {
     double T = gas->temperature();
     double T_spark = 2000; 
     double T_ign = T_spark;
-    double sparkm_ratio = 0.0001;
+    double sparkm_ratio = 0.001;
     double P = gas->pressure();
     std::vector<double> Y = gas->mass_fractions();
     
@@ -142,7 +160,7 @@ void Cylinder::calculate_adiabatic_flame_temperature() {
     }
 }
 
-double Cylinder::calculate_mass_flow_into_flame() {
+double Cylinder::calculate_mass_flow_into_flame(double dt) {
     // Calculate mass flow rate into flame zone based on thermal mass balance
     // Target: maintain flame zone at target_flame_temp (0.75 * Tad)
     
@@ -153,6 +171,7 @@ double Cylinder::calculate_mass_flow_into_flame() {
     // Recalculate adiabatic flame temperature at current pressure
     calculate_adiabatic_flame_temperature();
     target_flame_temp = flame_temp_fraction * adiabatic_flame_temp;
+    std::cout << "target_flame_temp: " << target_flame_temp << std::endl;
     
     double T_flame = flame_zone->temperature();
     double T_unburned = unburned_zone->temperature();
@@ -186,7 +205,7 @@ double Cylinder::calculate_mass_flow_into_flame() {
     
     if (std::abs(energy_per_kg) > 1e-6) {
         // Mass flow rate [kg/s] = Energy rate [J/s] / Energy per kg [J/kg]
-        double energy_rate = energy_needed / characteristic_time;  // [J/s]
+        double energy_rate = energy_needed / dt;  // [J/s]
         mass_flow_in = energy_rate / energy_per_kg;  // [kg/s]
     } else {
         // Fallback: if temperature difference is negligible, use geometric estimate
@@ -200,9 +219,10 @@ double Cylinder::calculate_mass_flow_into_flame() {
     // Ensure non-negative mass flow
     mass_flow_in = std::max(0.0, mass_flow_in);
     
-    // Limit mass flow to available unburned mass
+    // Limit mass flow to available unburned mass or half of flame zone
     double max_flow = mass_unburned / 1e-4;  // Don't consume all mass in 0.1 ms
     mass_flow_in = std::min(mass_flow_in, max_flow);
+    mass_flow_in = std::min(mass_flow_in, mass_flame/(2.0*dt));
     
     return mass_flow_in;
 }
@@ -253,41 +273,38 @@ void Cylinder::update_combustion_zones(double dt) {
         return;
     }
     
-    // Calculate change in specific internal energy due to compression/expansion
-    // This represents the work done on/by the gas during volume change
-    double u_gas_before = gas->internal_energy();  // [J/kg]
-    double P_gas_before = gas->pressure();
-    
     // Get current pressure after volume change (from main gas object)
     double P = gas->pressure();
     
     // Calculate change in specific internal energy
-    // For an isentropic process: du = -P*dv where v is specific volume
-    double specific_volume_before = previous_volume / mass;  // [m³/kg]
-    double specific_volume_now = volume / mass;  // [m³/kg]
-    double delta_u = u_gas_before - gas->internal_energy();  // [J/kg]
+    // based on specific heats of constituent gases
     
+    double u_u = unburned_zone->internal_energy();
+    double u_f = flame_zone->internal_energy();
+    double u_b = burned_zone->internal_energy();
+    double total_mass = mass_unburned + mass_flame + mass_burned;
+    double u_previous = (u_u * mass_unburned + u_f * mass_flame + u_b * mass_burned) / total_mass;
+    double u_delta = u_previous - gas->internal_energy();
+
+
     // Update all zones with new pressure AND internal energy change
     double T_u = unburned_zone->temperature();
     std::vector<double> Y_u = unburned_zone->mass_fractions();
-    double u_u = unburned_zone->internal_energy();
     double v_u = 1.0 / unburned_zone->density();
     unburned_zone->set_state_UV(u_u*previous_volume/volume, v_u*volume/previous_volume);
     
     double T_f = flame_zone->temperature();
     std::vector<double> Y_f = flame_zone->mass_fractions();
-    double u_f = flame_zone->internal_energy();
     double v_f = 1.0 / flame_zone->density();
     flame_zone->set_state_UV(u_f*previous_volume/volume, v_f*volume/previous_volume);
     
     double T_b = burned_zone->temperature();
     std::vector<double> Y_b = burned_zone->mass_fractions();
-    double u_b = burned_zone->internal_energy();
     double v_b = 1.0 / burned_zone->density();
     burned_zone->set_state_UV(u_b*previous_volume/volume, v_b*volume/previous_volume);
     
     // Calculate mass flow rates
-    double mass_flow_in = calculate_mass_flow_into_flame();  // [kg/s]
+    double mass_flow_in = calculate_mass_flow_into_flame(dt);  // [kg/s]
     
     double mass_flow_out = calculate_mass_flow_out_of_flame(mass_flow_in);  // [kg/s]
 
@@ -337,6 +354,34 @@ void Cylinder::update_combustion_zones(double dt) {
                                     h_f_initial * mass_flame + 
                                     h_b_initial * mass_burned;
     
+    // Transfer mass from flame to burned zone
+    if (dm_out > 1e-15) {
+        // Get current flame zone state after chemistry
+        double h_f_after_chem = flame_zone->enthalpy();
+        std::vector<double> Y_f = flame_zone->mass_fractions();
+        
+        mass_flame -= dm_out;
+        
+        // Mix outgoing flame gas into burned zone
+        double mass_burned_old = mass_burned;
+        mass_burned += dm_out;
+        
+        if (mass_burned > 1e-12) {
+            // Mass-weighted mixing of compositions
+            std::vector<double> Y_burned_new(Y_b.size());
+            for (size_t i = 0; i < Y_b.size(); ++i) {
+                Y_burned_new[i] = (Y_b[i] * mass_burned_old + Y_f[i] * dm_out) / mass_burned;
+            }
+            
+            // Mass-weighted mixing of enthalpies
+            double h_burned_mixed = (h_b_initial * mass_burned_old + h_f_after_chem * dm_out) / mass_burned;
+            
+            // Set burned zone state with mixed composition at current pressure
+            burned_zone->set_state_TPY(T_b, P, Y_burned_new);
+            burned_zone->set_state_HP(h_burned_mixed, P);
+        }
+    }
+
     // Transfer mass from unburned to flame zone
     if (dm_in > 1e-15) {
         mass_unburned -= dm_in;
@@ -357,62 +402,17 @@ void Cylinder::update_combustion_zones(double dt) {
             
             // Set flame zone state with mixed composition at current pressure
             flame_zone->set_state_TPY(T_f, P, Y_flame_new);
-            
-            // Iterate to match mixed enthalpy
-            for (int iter = 0; iter < 5; ++iter) {
-                double h_current = flame_zone->enthalpy();
-                double T_current = flame_zone->temperature();
-                double cp = flame_zone->cp();
-                double T_new = T_current + (h_flame_mixed - h_current) / cp;
-                T_new = std::max(300.0, std::min(T_new, 5000.0));
-                flame_zone->set_state_TPY(T_new, P, Y_flame_new);
-            }
+            flame_zone->set_state_HP(h_flame_mixed, P);
         }
     }
     
     // Advance chemistry in flame zone (reactions progress here)
     if (mass_flame > 1e-12) {
         flame_zone->advance_chemistry(dt);
-        burned_zone->advance_chemistry(dt);
-        unburned_zone->advance_chemistry(dt);
+        //burned_zone->advance_chemistry(dt);
+        //unburned_zone->advance_chemistry(dt);
     }
     
-    // Transfer mass from flame to burned zone
-    if (dm_out > 1e-15) {
-        // Get current flame zone state after chemistry
-        double h_f_after_chem = flame_zone->enthalpy();
-        std::vector<double> Y_f_after_chem = flame_zone->mass_fractions();
-        
-        mass_flame -= dm_out;
-        
-        // Mix outgoing flame gas into burned zone
-        double mass_burned_old = mass_burned;
-        mass_burned += dm_out;
-        
-        if (mass_burned > 1e-12) {
-            // Mass-weighted mixing of compositions
-            std::vector<double> Y_burned_new(Y_b.size());
-            for (size_t i = 0; i < Y_b.size(); ++i) {
-                Y_burned_new[i] = (Y_b[i] * mass_burned_old + Y_f_after_chem[i] * dm_out) / mass_burned;
-            }
-            
-            // Mass-weighted mixing of enthalpies
-            double h_burned_mixed = (h_b_initial * mass_burned_old + h_f_after_chem * dm_out) / mass_burned;
-            
-            // Set burned zone state with mixed composition at current pressure
-            burned_zone->set_state_TPY(T_b, P, Y_burned_new);
-            
-            // Iterate to match mixed enthalpy
-            for (int iter = 0; iter < 5; ++iter) {
-                double h_current = burned_zone->enthalpy();
-                double T_current = burned_zone->temperature();
-                double cp = burned_zone->cp();
-                double T_new = T_current + (h_burned_mixed - h_current) / cp;
-                T_new = std::max(300.0, std::min(T_new, 5000.0));
-                burned_zone->set_state_TPY(T_new, P, Y_burned_new);
-            }
-        }
-    }
     
     // Calculate heat release rate from enthalpy change
     double h_u_final = unburned_zone->enthalpy();
@@ -481,35 +481,8 @@ void Cylinder::mix_zones_to_cylinder() {
 void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
     PROFILE_FUNCTION();
     
-    // Store initial state (from PREVIOUS time step)
-    double initial_volume = previous_volume;  // Use previous volume, not current
-    double initial_T = gas->temperature();
-    double initial_P = gas->pressure();
-    double initial_S = gas->entropy();  // Store entropy for isentropic process
-    std::vector<double> initial_Y = gas->mass_fractions();
-    
     // Advance chemistry first
     advance_chemistry(dt);
-    
-    // Get state after chemistry
-    double T_after_chemistry = gas->temperature();
-    double P_after_chemistry = gas->pressure();
-    double S_after_chemistry = gas->entropy();
-    
-    // Apply isentropic compression/expansion due to volume change
-    double volume_ratio = volume / initial_volume;
-    
-    if (std::abs(volume_ratio - 1.0) > 1e-6) {
-        PROFILE_SCOPE("isentropic_process");
-        
-        // Apply isentropic compression/expansion from the post-chemistry state
-        // The entropy after chemistry already includes chemical reaction effects
-        double new_density = mass / volume;
-        double specific_volume = 1.0 / new_density;
-        
-        // Use Cantera's setState_SV (entropy, specific volume) to maintain isentropic process
-        gas->set_state_SV(S_after_chemistry, specific_volume);
-    }
     
     // Get state after isentropic process
     double T_after_isentropic = gas->temperature();
@@ -524,6 +497,7 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
         double surface_area = heat_transfer->calculate_surface_area(volume, bore, stroke, clearance_volume);
         double heat_flux = heat_transfer->calculate_heat_flux(
             T_after_isentropic, wall_temperature, surface_area, h_conv);
+	heat_flux = 0.0;
         
         // Apply heat transfer effects at constant volume
         double net_heat_rate = -heat_flux; // J/s (negative = heat loss)
@@ -541,9 +515,6 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
         gas->set_state_UV(specific_internal_energy, specific_volume);
             
     }
-    
-    // Update previous_volume for next time step
-    previous_volume = volume;
 }
 
 void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string& incoming_composition, double incoming_temperature) {
