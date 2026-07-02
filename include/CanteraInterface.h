@@ -12,7 +12,7 @@ private:
     std::shared_ptr<Cantera::Solution> gas;                                       
     Cantera::ThermoPhase* thermo;                                                 
     Cantera::Kinetics* kinetics;                                                  
-    std::unique_ptr<Cantera::IdealGasReactor> reactor;
+    std::unique_ptr<Cantera::Reactor> reactor;
     std::unique_ptr<Cantera::ReactorNet> reactor_net;
                                                                                   
 public:                                                                           

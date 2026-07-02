@@ -2,6 +2,7 @@
 #include "cantera/thermo/ThermoFactory.h"
 #include "cantera/kinetics/KineticsFactory.h"
 #include "cantera/base/Solution.h"
+#include "cantera/zeroD/Reactor.h"
 #include <stdexcept>
 #include <iostream>
 #include <cmath>
@@ -13,12 +14,17 @@ CanteraInterface::CanteraInterface(const std::string& mechanism_file) {
         kinetics = gas->kinetics().get();
         
         // Initialize reactor for chemistry integration with clone=false to share the solution
-        reactor = std::make_unique<Cantera::IdealGasReactor>(gas, false);
+        // Use generic Reactor instead of IdealGasReactor to support non-ideal equations of state
+        reactor = std::make_unique<Cantera::Reactor>(gas, false);
         
         // Initialize reactor net with shared_ptr to reactor to avoid deprecation warning
         // Create a shared_ptr that doesn't own the reactor (non-owning shared_ptr)
         std::shared_ptr<Cantera::ReactorBase> reactor_shared(reactor.get(), [](Cantera::ReactorBase*){});
         reactor_net = std::make_unique<Cantera::ReactorNet>(reactor_shared);
+        
+        // Verify that the equation of state was loaded correctly
+        std::string eos_type = thermo->type();
+        std::cout << "Loaded equation of state: " << eos_type << std::endl;
         
     } catch (const std::exception& e) {
         throw std::runtime_error("Failed to initialize Cantera: " + std::string(e.what()));
