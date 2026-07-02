@@ -37,6 +37,10 @@ void CanteraInterface::set_state_TP(double T, double P) {
     thermo->setState_TP(T, P);
 }
 
+void CanteraInterface::set_state_DP(double D, double P) {
+    thermo->setState_DP(D, P);
+}
+
 void CanteraInterface::advance_chemistry(double dt) {
     if (!kinetics || dt <= 0.0) {
         return;
@@ -53,6 +57,7 @@ void CanteraInterface::advance_chemistry(double dt) {
         double t0 = reactor_net->time();
         
         reactor_net->advance(t0 + dt);
+	//thermo->equilibrate("HP");
         
         // The reactor automatically updates the gas state when clone=false
         

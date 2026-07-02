@@ -44,7 +44,6 @@ void Cylinder::set_volume(double new_volume) {
         double specific_volume = 1.0 / new_density;
         
         // Use Cantera's setState_SV (entropy, specific volume) to maintain isentropic process
-	double temp_pre = gas->temperature();
         gas->set_state_SV(gas->entropy(), specific_volume);
     }
     previous_volume = volume;
@@ -128,6 +127,7 @@ void Cylinder::initialize_combustion_zones() {
     
     // Unburned zone starts with all the mass
     unburned_zone->set_state_TPY(T, P, Y);
+    double rho_u = unburned_zone->density();
     mass_unburned = mass*(1-sparkm_ratio);
     
     // Flame zone starts with a small initial kernel
@@ -150,14 +150,8 @@ void Cylinder::calculate_adiabatic_flame_temperature() {
     temp_gas->set_state_TPY(T_u, P, Y_u);
     
     // Equilibrate at constant enthalpy and pressure to get adiabatic flame temperature
-    try {
-        temp_gas->get_solution()->thermo()->equilibrate("HP");
-        adiabatic_flame_temp = temp_gas->temperature();
-    } catch (const std::exception& e) {
-        std::cerr << "Warning: Adiabatic flame temperature calculation failed: " 
-                  << e.what() << std::endl;
-        adiabatic_flame_temp = T_u * 3.0;  // Rough estimate
-    }
+    temp_gas->get_solution()->thermo()->equilibrate("HP");
+    adiabatic_flame_temp = temp_gas->temperature();
 }
 
 double Cylinder::calculate_mass_flow_into_flame(double dt) {
@@ -171,7 +165,6 @@ double Cylinder::calculate_mass_flow_into_flame(double dt) {
     // Recalculate adiabatic flame temperature at current pressure
     calculate_adiabatic_flame_temperature();
     target_flame_temp = flame_temp_fraction * adiabatic_flame_temp;
-    std::cout << "target_flame_temp: " << target_flame_temp << std::endl;
     
     double T_flame = flame_zone->temperature();
     double T_unburned = unburned_zone->temperature();
@@ -276,27 +269,45 @@ void Cylinder::update_combustion_zones(double dt) {
     // Get current pressure after volume change (from main gas object)
     double P = gas->pressure();
     
+    double rho_u = unburned_zone->density();
+    double rho_f = flame_zone->density();
+    double rho_b = burned_zone->density();
+    double old_volume = mass_unburned/rho_u + mass_burned/rho_b + mass_flame/rho_f;
+    if ((old_volume-previous_volume)/previous_volume>0.01){
+        std::cout << "Warning: unburned_density " << unburned_zone->density() << " density " << gas->density() << " calculation " << mass/volume << std::endl;
+    } else{
+	old_volume=previous_volume;
+    }
     // Update all zones with new pressure AND specific volume change
     double T_u = unburned_zone->temperature();
     std::vector<double> Y_u = unburned_zone->mass_fractions();
-    double rho_u = unburned_zone->density();
-    unburned_zone->set_state_DP((rho_u/volume*previous_volume),P);
+    unburned_zone->set_state_DP((rho_u/volume*old_volume),P);
     rho_u = unburned_zone->density();
     
     double T_f = flame_zone->temperature();
     std::vector<double> Y_f = flame_zone->mass_fractions();
-    double rho_f = flame_zone->density();
-    flame_zone->set_state_DP((rho_f/volume*previous_volume),P);
+    flame_zone->set_state_DP((rho_f/volume*old_volume),P);
     rho_f = flame_zone->density();
     
     double T_b = burned_zone->temperature();
     std::vector<double> Y_b = burned_zone->mass_fractions();
-    double rho_b = burned_zone->density();
-    burned_zone->set_state_DP((rho_b/volume*previous_volume),P);
+    burned_zone->set_state_DP((rho_b/volume*old_volume),P);
     rho_b = burned_zone->density();
 
-    std::cout << "volume " << volume << "mass_unburned/rho_u + mass_burned/rho_b + mass_flame/rho_f " << mass_unburned/rho_u + mass_burned/rho_b + mass_flame/rho_f << std::endl;
-    
+    double u_u = unburned_zone->internal_energy();
+    double u_f = flame_zone->internal_energy();
+    double u_b = burned_zone->internal_energy();
+    double cumulative_internal_energy = (mass_unburned*unburned_zone->internal_energy() + mass_burned*burned_zone->internal_energy() + mass_flame*flame_zone->internal_energy())/(mass_unburned+mass_burned+mass_flame);
+    double u_diff = gas->internal_energy() - cumulative_internal_energy;
+    double u_u_correction = (u_u  + u_diff);
+    double u_f_correction = (u_f + u_diff);
+    double u_b_correction = (u_b + u_diff);
+    unburned_zone->set_state_UV((u_u_correction),1/unburned_zone->density());
+    burned_zone->set_state_UV((u_b_correction),1/burned_zone->density());
+    flame_zone->set_state_UV((u_f_correction),1/flame_zone->density());
+    cumulative_internal_energy = (mass_unburned*unburned_zone->internal_energy() + mass_burned*burned_zone->internal_energy() + mass_flame*flame_zone->internal_energy())/(mass_unburned+mass_burned+mass_flame);
+
+
     // Calculate mass flow rates
     double mass_flow_in = calculate_mass_flow_into_flame(dt);  // [kg/s]
     
@@ -472,11 +483,8 @@ void Cylinder::mix_zones_to_cylinder() {
 
 }
 
-void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
+void Cylinder::heat_loss(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
     PROFILE_FUNCTION();
-    
-    // Advance chemistry first
-    advance_chemistry(dt);
     
     // Get state after isentropic process
     double T_after_isentropic = gas->temperature();
@@ -491,7 +499,6 @@ void Cylinder::update_thermodynamics(double dt, double mean_piston_speed, double
         double surface_area = heat_transfer->calculate_surface_area(volume, bore, stroke, clearance_volume);
         double heat_flux = heat_transfer->calculate_heat_flux(
             T_after_isentropic, wall_temperature, surface_area, h_conv);
-	heat_flux = 0.0;
         
         // Apply heat transfer effects at constant volume
         double net_heat_rate = -heat_flux; // J/s (negative = heat loss)
@@ -515,115 +522,43 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
     double dm = mass_flow_rate * dt;
     if (dm <= 0.0) return;
     
-    try {
-        // Use persistent mixing gas object instead of creating new one
-        double current_pressure = gas->pressure();
-        mixing_gas->set_state_TPX(incoming_temperature, current_pressure, incoming_composition);
-        
-        // Now mix the two gas streams at constant pressure
-        double current_mass = mass;
-        double new_total_mass = current_mass + dm;
-        
-        // Get current cylinder gas properties
-        double current_enthalpy = gas->enthalpy();
-        auto Y_current = gas->mass_fractions();
-        auto Y_incoming = mixing_gas->mass_fractions();
-        
-        // Mass-weighted mixing for energy conservation
-        double incoming_enthalpy = mixing_gas->enthalpy();
-        double mixed_enthalpy = (current_mass * current_enthalpy + dm * incoming_enthalpy) / new_total_mass;
-        
-        // Mass-weighted mixing of species compositions
-        std::vector<double> Y_mixed(Y_current.size());
-        for (size_t i = 0; i < Y_current.size(); ++i) {
-            Y_mixed[i] = (current_mass * Y_current[i] + dm * Y_incoming[i]) / new_total_mass;
-        }
-        
-        // Normalize mass fractions to ensure they sum to 1.0
-        double sum_Y = 0.0;
-        for (double& yi : Y_mixed) sum_Y += yi;
-        if (sum_Y > 0.0) {
-            for (double& yi : Y_mixed) yi /= sum_Y;
-        }
-        
-        // Update mass
-        mass = new_total_mass;
-        
-        // Find temperature that gives mixed enthalpy with mixed composition at constant pressure
-        double T_guess = gas->temperature();
-        double P_mixing = current_pressure;
-        
-        // Iterate to find temperature that gives the target mixed enthalpy
-        const int max_iterations = 20;
-        for (int iter = 0; iter < max_iterations; iter++) {
-            gas->set_state_TPY(T_guess, P_mixing, Y_mixed);
-            double h_current = gas->enthalpy();
-            double error = h_current - mixed_enthalpy;
-            
-            const double convergence_tolerance = 1e-6;
-            if (std::abs(error) < convergence_tolerance * std::abs(mixed_enthalpy)) {
-                break;  // Converged
-            }
-            
-            // Calculate derivative dh/dT at constant pressure
-            double dT_test = 1.0;
-            gas->set_state_TPY(T_guess + dT_test, P_mixing, Y_mixed);
-            double h_plus = gas->enthalpy();
-            double dh_dT = (h_plus - h_current) / dT_test;
-            
-            // Newton-Raphson update
-            const double min_derivative = 1e-10;
-            const double min_temperature = 200.0;   // [K]
-            const double max_temperature = 4000.0;  // [K]
-            
-            if (std::abs(dh_dT) > min_derivative) {
-                T_guess -= error / dh_dT;
-                T_guess = std::max(min_temperature, std::min(T_guess, max_temperature));
-            } else {
-                // Fallback: proportional adjustment
-                T_guess *= mixed_enthalpy / h_current;
-                T_guess = std::max(min_temperature, std::min(T_guess, max_temperature));
-                break;
-            }
-        }
-        
-        // Final pressure adjustment for new density in the cylinder volume
-        double new_density = mass / volume;
-        double final_temperature = gas->temperature();
-        double R_specific = 8314.0 / gas->mean_molecular_weight();
-        double final_pressure = new_density * R_specific * final_temperature;
-        
-        // Set final mixed state
-        gas->set_state_TPY(final_temperature, final_pressure, Y_mixed);
-        
-        // Reset combustion state when new mass is added
-        combustion_initiated = false;
-        combustion_active = false;
-        
-    } catch (const std::exception& e) {
-        std::cerr << "Warning: Advanced mixing failed: " << e.what() << std::endl;
-        
-        // Fallback: assume incoming gas has same composition as current gas
-        double current_mass = mass;
-        double new_total_mass = current_mass + dm;
-        double current_enthalpy = gas->enthalpy();
-        double mixed_enthalpy = (current_mass * current_enthalpy + dm * current_enthalpy) / new_total_mass;
-        
-        mass = new_total_mass;
-        
-        // Estimate temperature from mixed enthalpy
-        const double min_temperature = 200.0;   // [K]
-        const double max_temperature = 4000.0;  // [K]
-        double mixed_T = mixed_enthalpy / gas->cp();
-        mixed_T = std::max(min_temperature, std::min(mixed_T, max_temperature));
-        
-        // Calculate new pressure from ideal gas law
-        double new_density = mass / volume;
-        double R_specific = 8314.0 / gas->mean_molecular_weight();
-        double new_P = new_density * R_specific * mixed_T;
-        
-        gas->set_state_TPY(mixed_T, new_P, gas->mass_fractions());
+    // Use persistent mixing gas object instead of creating new one
+    double current_pressure = gas->pressure();
+    mixing_gas->set_state_TPX(incoming_temperature, current_pressure, incoming_composition);
+    
+    // Now mix the two gas streams at constant pressure
+    double current_mass = mass;
+    double new_total_mass = current_mass + dm;
+    
+    // Get current cylinder gas properties
+    auto Y_current = gas->mass_fractions();
+    auto Y_incoming = mixing_gas->mass_fractions();
+
+    // Mass-weighted mixing of species compositions
+    std::vector<double> Y_mixed(Y_current.size());
+    for (size_t i = 0; i < Y_current.size(); ++i) {
+        Y_mixed[i] = (current_mass * Y_current[i] + dm * Y_incoming[i]) / new_total_mass;
     }
+    
+    // Normalize mass fractions to ensure they sum to 1.0
+    double sum_Y = 0.0;
+    for (double& yi : Y_mixed) sum_Y += yi;
+    if (sum_Y > 0.0) {
+        for (double& yi : Y_mixed) yi /= sum_Y;
+    }
+    
+    // incoming enthalpy for energy conservation
+    double incoming_enthalpy = mixing_gas->enthalpy();
+    
+    // Update state
+    gas->set_state_TPY(gas->temperature(), gas->pressure(), Y_mixed);
+    gas->set_state_UV((gas->internal_energy()*mass+incoming_enthalpy*dm)/new_total_mass, volume/new_total_mass);
+    mass = new_total_mass;
+    
+    // Reset combustion state when new mass is added
+    combustion_initiated = false;
+    combustion_active = false;
+    
 }
 
 void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
@@ -632,6 +567,7 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
     
     // Store current state
     double current_mass = mass;
+    double current_internal_energy = gas->internal_energy();  // Specific enthalpy [J/kg]
     double current_enthalpy = gas->enthalpy();  // Specific enthalpy [J/kg]
     auto current_Y = gas->mass_fractions();
     
@@ -640,12 +576,12 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
     double new_mass = std::max(current_mass * min_mass_fraction, current_mass - dm);
     
     // Calculate enthalpy balance
-    double total_enthalpy_before = current_mass * current_enthalpy;  // [J]
-    double enthalpy_removed = dm * current_enthalpy;  // [J]
-    double total_enthalpy_after = total_enthalpy_before - enthalpy_removed;  // [J]
+    double total_internal_energy_before = current_mass * current_internal_energy;  // [J]
+    double energy_removed = dm * current_enthalpy;  // [J]
+    double total_energy_after = total_internal_energy_before - energy_removed;  // [J]
     
-    // Calculate new specific enthalpy of remaining gas
-    double new_specific_enthalpy = total_enthalpy_after / new_mass;  // [J/kg]
+    // Calculate new specific energy of remaining gas
+    double new_specific_energy = total_energy_after / new_mass;  // [J/kg]
     
     // Update mass
     mass = new_mass;
@@ -654,90 +590,22 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
     combustion_initiated = false;
     combustion_active = false;
     
-    try {
-        // Set state using enthalpy and pressure
-        double current_pressure = gas->pressure();
-        gas->set_state_HP(new_specific_enthalpy, current_pressure);
+    // Set state using enthalpy and pressure
+    double current_pressure = gas->pressure();
+    gas->set_state_UV(new_specific_energy, volume/mass);
         
-    } catch (const std::exception& e) {
-        std::cerr << "Warning: Mass removal failed: " << e.what() << std::endl;
-        
-        // Fallback: maintain temperature, recalculate pressure for new density
-        double current_T = gas->temperature();
-        double new_density = mass / volume;
-        double R_specific = 8314.0 / gas->mean_molecular_weight();
-        double new_P = new_density * R_specific * current_T;
-        
-        gas->set_state_TPY(current_T, new_P, current_Y);
-    }
 }
 
 void Cylinder::advance_chemistry(double dt) {
     // Update combustion zones if combustion is active
     if (combustion_active) {
-        // Store initial states for debugging
-        double T_u_before = unburned_zone->temperature();
-        double T_f_before = flame_zone->temperature();
-        double T_b_before = burned_zone->temperature();
-        
-        auto Y_u_before = unburned_zone->mass_fractions();
-        auto Y_f_before = flame_zone->mass_fractions();
-        auto Y_b_before = burned_zone->mass_fractions();
-        
-        // Find H2O species index
-        auto species_names = gas->species_names();
-        size_t h2o_index = 0;
-        for (size_t i = 0; i < species_names.size(); ++i) {
-            if (species_names[i] == "H2O") {
-                h2o_index = i;
-                break;
-            }
-        }
-        
-        double h2o_u_before = Y_u_before[h2o_index];
-        double h2o_f_before = Y_f_before[h2o_index];
-        double h2o_b_before = Y_b_before[h2o_index];
         
         update_combustion_zones(dt);
-        
-        // Get final states for debugging
-        double T_u_after = unburned_zone->temperature();
-        double T_f_after = flame_zone->temperature();
-        double T_b_after = burned_zone->temperature();
-        
-        auto Y_u_after = unburned_zone->mass_fractions();
-        auto Y_f_after = flame_zone->mass_fractions();
-        auto Y_b_after = burned_zone->mass_fractions();
-        
-        double h2o_u_after = Y_u_after[h2o_index];
-        double h2o_f_after = Y_f_after[h2o_index];
-        double h2o_b_after = Y_b_after[h2o_index];
-        
-        // Print debug information
-        std::cout << "=== Combustion Zone Changes (dt=" << dt << " s) ===" << std::endl;
-        std::cout << "Unburned Zone:" << std::endl;
-        std::cout << "  T: " << T_u_before << " K -> " << T_u_after << " K (ΔT = " 
-                  << (T_u_after - T_u_before) << " K)" << std::endl;
-        std::cout << "  H2O: " << h2o_u_before << " -> " << h2o_u_after 
-                  << " (Δ = " << (h2o_u_after - h2o_u_before) << ")" << std::endl;
-        
-        std::cout << "Flame Zone:" << std::endl;
-        std::cout << "  T: " << T_f_before << " K -> " << T_f_after << " K (ΔT = " 
-                  << (T_f_after - T_f_before) << " K)" << std::endl;
-        std::cout << "  H2O: " << h2o_f_before << " -> " << h2o_f_after 
-                  << " (Δ = " << (h2o_f_after - h2o_f_before) << ")" << std::endl;
-        
-        std::cout << "Burned Zone:" << std::endl;
-        std::cout << "  T: " << T_b_before << " K -> " << T_b_after << " K (ΔT = " 
-                  << (T_b_after - T_b_before) << " K)" << std::endl;
-        std::cout << "  H2O: " << h2o_b_before << " -> " << h2o_b_after 
-                  << " (Δ = " << (h2o_b_after - h2o_b_before) << ")" << std::endl;
-        std::cout << std::endl;
         
         mix_zones_to_cylinder();
     } else if (!combustion_initiated) {
         // Only advance chemistry if combustion hasn't started yet
-        //gas->advance_chemistry(dt);
+        gas->advance_chemistry(dt);
     }
 }
 
