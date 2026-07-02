@@ -22,6 +22,7 @@ public:
     void set_state_TPY(double T, double P, const std::vector<double>& Y);         
     void set_state_TPX(double T, double P, const std::string& X);                 
     void set_state_TP(double T, double P);                 
+    void set_state_DP(double D, double P);                 
     void advance_chemistry(double dt);  
                                                                                       
     // Property getters                                                           
