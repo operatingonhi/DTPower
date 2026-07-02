@@ -57,7 +57,6 @@ void CanteraInterface::advance_chemistry(double dt) {
         double t0 = reactor_net->time();
         
         reactor_net->advance(t0 + dt);
-	//thermo->equilibrate("HP");
         
         // The reactor automatically updates the gas state when clone=false
         
