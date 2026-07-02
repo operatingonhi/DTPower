@@ -24,6 +24,10 @@ public:
     void set_state_TP(double T, double P);                 
     void set_state_DP(double D, double P);                 
     void advance_chemistry(double dt);  
+
+    // Set only composition (mass fractions or mole fractions)                                                              
+    void set_mass_fractions(const std::vector<double>& Y);                                                                  
+    void set_mole_fractions(const std::string& X);
                                                                                       
     // Property getters                                                           
     double temperature() const;                                                   
