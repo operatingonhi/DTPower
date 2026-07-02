@@ -41,6 +41,14 @@ void CanteraInterface::set_state_DP(double D, double P) {
     thermo->setState_DP(D, P);
 }
 
+void CanteraInterface::set_mass_fractions(const std::vector<double>& Y) {
+    thermo->setMassFractions(Y.data());
+}
+
+void CanteraInterface::set_mole_fractions(const std::string& X) {
+    thermo->setMoleFractionsByName(X);
+}
+
 void CanteraInterface::advance_chemistry(double dt) {
     if (!kinetics || dt <= 0.0) {
         return;

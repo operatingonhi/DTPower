@@ -382,8 +382,8 @@ void Cylinder::update_combustion_zones(double dt) {
             // Mass-weighted mixing of enthalpies
             double h_burned_mixed = (h_b_initial * mass_burned_old + h_f_after_chem * dm_out) / mass_burned;
             
-            // Set burned zone state directly with enthalpy and pressure (skip TPY intermediate step)
-            burned_zone->set_state_TPY(burned_zone->temperature(), P, Y_burned_new);
+            // Set composition first, then state with enthalpy and pressure
+            burned_zone->set_mass_fractions(Y_burned_new);
             burned_zone->set_state_HP(h_burned_mixed, P);
         }
     }
@@ -406,8 +406,8 @@ void Cylinder::update_combustion_zones(double dt) {
             // Mass-weighted mixing of enthalpies
             double h_flame_mixed = (h_f_initial * mass_flame_old + h_u_initial * dm_in) / mass_flame;
             
-            // Set flame zone state directly with enthalpy and pressure (skip TPY intermediate step)
-            flame_zone->set_state_TPY(flame_zone->temperature(), P, Y_flame_new);
+            // Set composition first, then state with enthalpy and pressure
+            flame_zone->set_mass_fractions(Y_flame_new);
             flame_zone->set_state_HP(h_flame_mixed, P);
         }
     }
@@ -480,10 +480,8 @@ void Cylinder::mix_zones_to_cylinder() {
     // Calculate specific volume
     double v_specific = volume / total_mass;
     
-    // Update composition to match mass-weighted average
-    gas->set_state_TPY(300.0, 1.0e6, Y_avg);
-    
-    // Set cylinder state using internal energy and specific volume
+    // Update composition to match mass-weighted average, then set state
+    gas->set_mass_fractions(Y_avg);
     gas->set_state_UV(u_avg, v_specific);
 }
 
@@ -556,8 +554,8 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
         for (double& yi : Y_mixed) yi *= inv_sum;
     }
     
-    // Update state
-    gas->set_state_TPY(gas->temperature(), current_pressure, Y_mixed);
+    // Update composition first, then state
+    gas->set_mass_fractions(Y_mixed);
     gas->set_state_UV((current_internal_energy*current_mass + incoming_enthalpy*dm)/new_total_mass, volume/new_total_mass);
     mass = new_total_mass;
     
