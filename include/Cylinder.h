@@ -13,6 +13,9 @@ private:
     // Add persistent incoming gas object for mixing calculations
     std::unique_ptr<CanteraInterface> mixing_gas;
     
+    // Persistent gas object for adiabatic flame temperature calculations
+    std::unique_ptr<CanteraInterface> adiabatic_gas;
+    
     // Three-zone combustion model
     std::unique_ptr<CanteraInterface> unburned_zone;    // Reactants
     std::unique_ptr<CanteraInterface> flame_zone;       // Flame front

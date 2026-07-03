@@ -21,6 +21,9 @@ Cylinder::Cylinder(double cylinder_bore, double cylinder_stroke, double clearanc
     // Initialize persistent mixing gas object
     mixing_gas = std::make_unique<CanteraInterface>(mechanism_file);
     
+    // Initialize persistent adiabatic gas object for flame temperature calculations
+    adiabatic_gas = std::make_unique<CanteraInterface>(mechanism_file);
+    
     // Initialize combustion zone reactors
     unburned_zone = std::make_unique<CanteraInterface>(mechanism_file);
     flame_zone = std::make_unique<CanteraInterface>(mechanism_file);
@@ -140,18 +143,16 @@ void Cylinder::initialize_combustion_zones() {
 }
 
 void Cylinder::calculate_adiabatic_flame_temperature() {
-    // Create a temporary gas object for adiabatic flame calculation
-    auto temp_gas = std::make_unique<CanteraInterface>(mechanism_file);
-    
+    // Reuse persistent gas object for adiabatic flame calculation
     // Set to current unburned conditions at current cylinder pressure
     double T_u = unburned_zone->temperature();
     double P = gas->pressure();  // Use current cylinder pressure
     std::vector<double> Y_u = unburned_zone->mass_fractions();
-    temp_gas->set_state_TPY(T_u, P, Y_u);
+    adiabatic_gas->set_state_TPY(T_u, P, Y_u);
     
     // Equilibrate at constant enthalpy and pressure to get adiabatic flame temperature
-    temp_gas->get_solution()->thermo()->equilibrate("HP");
-    adiabatic_flame_temp = temp_gas->temperature();
+    adiabatic_gas->get_solution()->thermo()->equilibrate("HP");
+    adiabatic_flame_temp = adiabatic_gas->temperature();
 }
 
 double Cylinder::calculate_mass_flow_into_flame(double dt) {
