@@ -319,13 +319,12 @@ void Cylinder::update_combustion_zones(double dt) {
     static int time_step = 0;
     if (logging_enabled && combustion_log.is_open()) {
         double T_flame = flame_zone->temperature();
-        double rho_flame = flame_zone->density();
         double temp_error = T_flame - target_flame_temp;
         
         combustion_log << time_step << ","
                        << mass_flow_in << ","
                        << mass_flow_out << ","
-                       << rho_flame << ","
+                       << rho_f << ","
                        << flame_radius << ","
                        << flame_shell_thickness << ","
                        << T_flame << ","
@@ -360,11 +359,12 @@ void Cylinder::update_combustion_zones(double dt) {
     double total_enthalpy_initial = h_u_initial * mass_unburned + 
                                     h_f_initial * mass_flame + 
                                     h_b_initial * mass_burned;
+    double u_u_initial = unburned_zone->internal_energy();
+    double u_f_initial = flame_zone->internal_energy();
+    double u_b_initial = burned_zone->internal_energy();
     
     // Transfer mass from flame to burned zone
     if (dm_out > 1e-15) {
-        // Get current flame zone state after chemistry
-        double h_f_after_chem = flame_zone->enthalpy();
         
         mass_flame -= dm_out;
         
@@ -380,11 +380,11 @@ void Cylinder::update_combustion_zones(double dt) {
             }
             
             // Mass-weighted mixing of enthalpies
-            double h_burned_mixed = (h_b_initial * mass_burned_old + h_f_after_chem * dm_out) / mass_burned;
+            double u_burned_mixed = (u_b_initial * mass_burned_old + u_f * dm_out) / mass_burned;
             
             // Set composition first, then state with enthalpy and pressure
             burned_zone->set_mass_fractions(Y_burned_new);
-            burned_zone->set_state_HP(h_burned_mixed, P);
+            burned_zone->set_state_UV(u_burned_mixed, (1/rho_b*mass_burned_old + 1/rho_f*dm_out)/mass_burned);
         }
     }
 
@@ -403,12 +403,12 @@ void Cylinder::update_combustion_zones(double dt) {
                 Y_flame_new[i] = (Y_f[i] * mass_flame_old + Y_u[i] * dm_in) / mass_flame;
             }
             
-            // Mass-weighted mixing of enthalpies
-            double h_flame_mixed = (h_f_initial * mass_flame_old + h_u_initial * dm_in) / mass_flame;
+            // Mass-weighted mixing of internal energies
+            double u_flame_mixed = (u_f_initial * mass_flame_old + u_u_initial * dm_in) / mass_flame;
             
             // Set composition first, then state with enthalpy and pressure
             flame_zone->set_mass_fractions(Y_flame_new);
-            flame_zone->set_state_HP(h_flame_mixed, P);
+            flame_zone->set_state_UV(u_flame_mixed, (1/rho_u*dm_in + 1/rho_f*mass_flame_old)/mass_flame);
         }
     }
     
