@@ -280,6 +280,7 @@ void Engine::run_cycle() {
     bool is_motored_run = true;
     
     std::cout << "\n=== Running motored cycle to establish baseline pressure ===" << std::endl;
+    initialize_cycle();  // Initialize for motored run
     run_cycle_internal(is_motored_run, motored_pressures, motored_angles);
     
     // Now run the fired cycle with motored pressure data
