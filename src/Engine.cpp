@@ -277,184 +277,20 @@ void Engine::run_cycle() {
     // Run motored cycle first to get motored pressure profile
     std::vector<double> motored_pressures;
     std::vector<double> motored_angles;
-    bool is_motored_run = true;
     
     std::cout << "\n=== Running motored cycle to establish baseline pressure ===" << std::endl;
     initialize_cycle();  // Initialize for motored run
-    run_cycle_internal(is_motored_run, motored_pressures, motored_angles);
+    run_cycle_internal(true, motored_pressures, motored_angles);
     
     // Now run the fired cycle with motored pressure data
     std::cout << "\n=== Running fired cycle with chemistry ===" << std::endl;
-    is_motored_run = false;
     
     // Reset for fired cycle
     initialize_cycle();
-    
-    // Use simulation parameters instead of hardcoded values
-    double target_crank_angle = sim_params.simulation.end_angle;
-    double adaptive_angle_step = crank_angle_step;
-    double min_angle_step = sim_params.time_stepping.min_angle_step;
-    double max_angle_step = sim_params.time_stepping.max_angle_step;
-    bool adaptive_stepping = sim_params.time_stepping.adaptive_stepping;
-    
-    // Progress tracking variables
-    double start_angle = sim_params.simulation.start_angle;
-    double total_angle_range = target_crank_angle - start_angle;
-    int last_progress_percent = -1;
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
-    const int progress_bar_width = 50;
-    std::cout << "Starting engine cycle simulation..." << std::endl;
-    std::cout << "Progress: [";
-    for (int i = 0; i < progress_bar_width; ++i) std::cout << " ";
-    std::cout << "] 0%" << std::flush;
-    
-    for (crank_angle = start_angle; crank_angle < target_crank_angle; ) {
-        PROFILE_SCOPE("main_loop_iteration");
-        
-        // Interpolate motored pressure for current crank angle
-        double motored_pressure = interpolate_motored_pressure(crank_angle, motored_angles, motored_pressures);
-        
-        // Calculate progress percentage
-        double progress = (crank_angle - start_angle) / total_angle_range;
-        int progress_percent = static_cast<int>(progress * 100);
-        
-        // Update progress bar every 2%
-        if (progress_percent > last_progress_percent && progress_percent % 2 == 0) {
-            last_progress_percent = progress_percent;
-            
-            // Clear the line and redraw progress bar
-            std::cout << "\rProgress: [";
-            int filled = static_cast<int>(progress * 50);
-            for (int i = 0; i < 50; ++i) {
-                if (i < filled) std::cout << "=";
-                else if (i == filled) std::cout << ">";
-                else std::cout << " ";
-            }
-            std::cout << "] " << progress_percent << "%" << std::flush;
-            
-            // Show current crank angle and phase
-            std::string phase;
-            if (crank_angle < 0) phase = "Setup";
-            else if (crank_angle < 180) phase = "Intake";
-            else if (crank_angle < 360) phase = "Compression";
-            else if (crank_angle < 540) phase = "Expansion";
-            else phase = "Exhaust";
-            
-            std::cout << " (" << static_cast<int>(crank_angle) << "_ - " << phase << ")" << std::flush;
-        }
-        
-        // Check if we're in a reactive phase requiring smaller time steps
-        const double reactive_temperature_threshold = 800.0;  // [K]
-        double spark_power = spark->get_spark_power(crank_angle);
-        bool reactive_phase = (cylinder->get_temperature() > reactive_temperature_threshold) || 
-                             (spark_power > 0.0) ||
-                             (spark->is_spark_active(crank_angle));
-        
-        // Adjust angle step based on conditions
-        if (adaptive_stepping) {
-            const double step_reduction_factor = 0.5;
-            const double step_increase_factor = 1.1;
-            
-            if (reactive_phase) {
-                adaptive_angle_step = std::max(min_angle_step, adaptive_angle_step * step_reduction_factor);
-            } else {
-                adaptive_angle_step = std::min(max_angle_step, adaptive_angle_step * step_increase_factor);
-            }
-        }
-        
-        // Ensure we don't overshoot target angle
-        adaptive_angle_step = std::min(adaptive_angle_step, target_crank_angle - crank_angle);
-        
-        // Calculate corresponding time step
-        double omega = engine_speed * 2.0 * M_PI / 60.0;  // [rad/s]
-        double adaptive_time_step = adaptive_angle_step * M_PI / 180.0 / omega;  // [s]
-        time_step = adaptive_time_step;
-        
-        // Update cylinder volume due to piston motion
-        {
-            PROFILE_SCOPE("update_cylinder_volume");
-            update_cylinder_volume();
-        }
-        
-        // Calculate and apply mass flows before thermodynamics
-        {
-            PROFILE_SCOPE("calculate_valve_flows");
-            calculate_valve_flows();
-        }
-        
-        // Handle spark ignition
-        if (spark_power > 0.0) {
-            PROFILE_SCOPE("spark_ignition");
-            // Calculate fuel energy input rate (chemical energy entering cylinder)
-            const double strokes_per_cycle = 2.0;  // 4-stroke engine
-            double cycles_per_second = engine_speed / (60.0 * strokes_per_cycle);
-            double mass_flow_rate = cylinder->get_mass() * cycles_per_second;
-            fuel_energy_rate = mass_flow_rate * lower_heating_value;  // [W]
-            cylinder->initiate_spark_ignition(spark_power * adaptive_time_step);
-        }
-        
-        // Capture peak temperature during combustion
-        if (cylinder->get_temperature() > T3) {
-            T3 = cylinder->get_temperature();
-        }
-        
-        // Update thermodynamics
-        {
-            PROFILE_SCOPE("update_thermodynamics");
-	    if (reactive_temperature_threshold < cylinder->get_temperature()){
-            	cylinder->advance_chemistry(adaptive_time_step);
-	    }
-            double mean_piston_speed = crankshaft->calculate_mean_piston_speed(engine_speed);
-            cylinder->heat_loss(adaptive_time_step, mean_piston_speed, motored_pressure, valves_flowing);
-        }
-        
-        // Calculate and accumulate friction work
-        {
-            PROFILE_SCOPE("friction_calculation");
-            double piston_velocity = crankshaft->calculate_piston_velocity(crank_angle, engine_speed);
-            double friction_power = friction->calculate_instantaneous_friction_power(
-                engine_speed, cylinder->get_pressure(), crank_angle, piston_velocity);
-            friction->accumulate_friction_work(friction_power, adaptive_time_step);
-        }
-        
-        // Track energy flows for ledger
-        {
-            PROFILE_SCOPE("energy_tracking");
-            double heat_loss = cylinder->get_heat_transfer_rate() * adaptive_time_step;
-            heat_transfer_loss += std::abs(heat_loss);  // Always positive for losses
-        }
-        
-        crank_angle += adaptive_angle_step;
-        
-        // Store results at specified intervals (starting from 0°)
-        if (crank_angle >= 0.0 && 
-            (results.crank_angles.empty() || 
-             crank_angle - results.crank_angles.back() >= sim_params.simulation.output_interval)) {
-            store_results();
-        }
-    }
-    
-    // Complete progress bar and show timing
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    
-    std::cout << "\rProgress: [";
-    for (int i = 0; i < progress_bar_width; ++i) std::cout << "=";
-    std::cout << "] 100% - Complete!" << std::endl;
-    std::cout << "Simulation completed in " << duration.count() << " ms" << std::endl;
-    
-    calculate_energy_ledger();
-    
-    #ifdef PROFILING_ENABLED
-    Profiler::getInstance().printReport();
-    #endif
-    
-    // Disable combustion logging at end of cycle
-    cylinder->disable_combustion_logging();
+    run_cycle_internal(false, motored_pressures, motored_angles);
 }
 
-void Engine::run_cycle_internal(bool is_motored, std::vector<double>& pressure_profile, std::vector<double>& angle_profile) {
+void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pressures, std::vector<double>& motored_angles) {
     PROFILE_FUNCTION();
     
     // Use simulation parameters instead of hardcoded values
@@ -477,8 +313,17 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& pressure_p
     for (int i = 0; i < progress_bar_width; ++i) std::cout << " ";
     std::cout << "] 0%" << std::flush;
     
+    // For fired cycle, we need motored pressure data for heat transfer calculations
+    // For motored cycle, we're building the pressure profile
+    
     for (crank_angle = start_angle; crank_angle < target_crank_angle; ) {
         PROFILE_SCOPE("main_loop_iteration");
+        
+        // Interpolate motored pressure for current crank angle (only used in fired cycle)
+        double motored_pressure = 0.0;
+        if (!is_motored && !motored_pressures.empty()) {
+            motored_pressure = interpolate_motored_pressure(crank_angle, motored_angles, motored_pressures);
+        }
         
         // Calculate progress percentage
         double progress = (crank_angle - start_angle) / total_angle_range;
@@ -580,7 +425,8 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& pressure_p
             }
             double mean_piston_speed = crankshaft->calculate_mean_piston_speed(engine_speed);
             // For motored run, use 0.0 for motored_pressure (no combustion term)
-            cylinder->heat_loss(adaptive_time_step, mean_piston_speed, 0.0, valves_flowing);
+            // For fired run, use interpolated motored_pressure
+            cylinder->heat_loss(adaptive_time_step, mean_piston_speed, motored_pressure, valves_flowing);
         }
         
         // Calculate and accumulate friction work (only for fired cycle)
@@ -607,9 +453,9 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& pressure_p
              crank_angle - results.crank_angles.back() >= sim_params.simulation.output_interval)) {
             
             if (is_motored) {
-                // Store motored pressure profile
-                pressure_profile.push_back(cylinder->get_pressure());
-                angle_profile.push_back(crank_angle);
+                // Store motored pressure profile for use in fired cycle
+                motored_pressures.push_back(cylinder->get_pressure());
+                motored_angles.push_back(crank_angle);
             }
             
             store_results();
@@ -625,9 +471,14 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& pressure_p
     std::cout << "] 100% - Complete!" << std::endl;
     std::cout << "Simulation completed in " << duration.count() << " ms" << std::endl;
     
-    // Only calculate energy ledger and output results for fired cycle
-    if (!is_motored) {
+    // Calculate energy ledger and output results based on cycle type
+    if (is_motored) {
+        // Output motored results to separate file
+        output_results("motored_results.csv");
+    } else {
+        // Fired cycle: calculate energy ledger and output main results
         calculate_energy_ledger();
+        output_results("engine_results.csv");
         
         #ifdef PROFILING_ENABLED
         Profiler::getInstance().printReport();
@@ -635,9 +486,6 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& pressure_p
         
         // Disable combustion logging at end of cycle
         cylinder->disable_combustion_logging();
-    } else {
-        // Output motored results to separate file
-        output_results("motored_results.csv");
     }
 }
 
