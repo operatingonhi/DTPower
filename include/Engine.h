@@ -93,6 +93,8 @@ private:
     void initialize_flame_model();                                           
     void store_results();                                             
     void calculate_energy_ledger();
+    void run_cycle_internal(bool is_motored, std::vector<double>& pressure_profile, std::vector<double>& angle_profile);
+    double interpolate_motored_pressure(double angle, const std::vector<double>& angles, const std::vector<double>& pressures);
                                                                                   
 public:                                                                           
     Engine(double cylinder_bore, double cylinder_stroke, double                   
