@@ -554,7 +554,11 @@ void Engine::output_results(const std::string& filename) {
     
     // Add species mass fraction columns
     for (const auto& species : results.species_names) {
-        file << ",Y_" << species << "[-]";
+        // Replace spaces and commas with underscores to avoid CSV parsing issues
+        std::string clean_species = species;
+        std::replace(clean_species.begin(), clean_species.end(), ' ', '_');
+        std::replace(clean_species.begin(), clean_species.end(), ',', '_');
+        file << ",Y_" << clean_species << "[-]";
     }
     file << "\n";
     
