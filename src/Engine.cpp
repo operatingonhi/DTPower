@@ -327,7 +327,7 @@ void Engine::run_cycle() {
         }
         
         // Check if we're in a reactive phase requiring smaller time steps
-        const double reactive_temperature_threshold = 1000.0;  // [K]
+        const double reactive_temperature_threshold = 800.0;  // [K]
         double spark_power = spark->get_spark_power(crank_angle);
         bool reactive_phase = (cylinder->get_temperature() > reactive_temperature_threshold) || 
                              (spark_power > 0.0) ||
@@ -384,8 +384,11 @@ void Engine::run_cycle() {
         // Update thermodynamics
         {
             PROFILE_SCOPE("update_thermodynamics");
+	    if (reactive_temperature_threshold < cylinder->get_temperature()){
+            	cylinder->advance_chemistry(adaptive_time_step);
+	    }
             double mean_piston_speed = crankshaft->calculate_mean_piston_speed(engine_speed);
-            cylinder->update_thermodynamics(adaptive_time_step, mean_piston_speed, 0.0, valves_flowing);
+            cylinder->heat_loss(adaptive_time_step, mean_piston_speed, 0.0, valves_flowing);
         }
         
         // Calculate and accumulate friction work
