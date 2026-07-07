@@ -300,6 +300,11 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
     double max_angle_step = sim_params.time_stepping.max_angle_step;
     bool adaptive_stepping = sim_params.time_stepping.adaptive_stepping;
     
+    // Track if we've set reference values at IVC
+    bool reference_values_set = false;
+    const double IVC_angle = 180.0;  // Intake valve closure occurs at ~180° ATDC
+    const double IVC_tolerance = 1.0;  // Capture within 1 degree of IVC
+    
     // Progress tracking variables
     double start_angle = sim_params.simulation.start_angle;
     double total_angle_range = target_crank_angle - start_angle;
@@ -446,6 +451,26 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
         }
         
         crank_angle += adaptive_angle_step;
+        
+        // Capture reference values at IVC during motored run
+        if (is_motored && !reference_values_set && 
+            crank_angle >= (IVC_angle - IVC_tolerance) && 
+            crank_angle <= (IVC_angle + IVC_tolerance)) {
+            
+            // Get state at IVC
+            double T_ivc = cylinder->get_temperature();  // [K]
+            double P_ivc = cylinder->get_pressure();     // [Pa]
+            double V_ivc = cylinder->get_volume();       // [m³]
+            
+            // Set reference values for Woschni heat transfer
+            cylinder->set_heat_transfer_reference_values(T_ivc, P_ivc, V_ivc);
+            reference_values_set = true;
+            
+            std::cout << "\nReference values set at IVC (CA=" << crank_angle << "°):" << std::endl;
+            std::cout << "  T_ivc = " << T_ivc << " K" << std::endl;
+            std::cout << "  P_ivc = " << P_ivc / 1.0e3 << " kPa" << std::endl;
+            std::cout << "  V_ivc = " << V_ivc * 1.0e6 << " cm³" << std::endl;
+        }
         
         // Store results at specified intervals (starting from 0°)
         if (crank_angle >= 0.0 && 
