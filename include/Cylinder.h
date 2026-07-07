@@ -78,6 +78,11 @@ public:
     void set_mass(double new_mass);
     void update_heat_transfer_parameters(double c1, double c2, double c3);
     
+    // Set reference values for Woschni heat transfer (call at IVC during motored run)
+    void set_heat_transfer_reference_values(double T_ivc, double P_ivc, double V_ivc) {
+        heat_transfer->set_reference_values(T_ivc, P_ivc, V_ivc);
+    }
+    
     void initiate_spark_ignition(double spark_energy);
                                                                                      
     void heat_loss(double dt, double mean_piston_speed, double motored_pressure = 0.0, bool valves_flowing = false);
