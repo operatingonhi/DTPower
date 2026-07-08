@@ -134,7 +134,7 @@ void Cylinder::initialize_combustion_zones() {
     double T = gas->temperature();
     double T_spark = 2000; 
     double T_ign = T_spark;
-    double sparkm_ratio = 0.001;
+    double sparkm_ratio = 0.01;
     double P = gas->pressure();
     std::vector<double> Y = gas->mass_fractions();
     
@@ -412,7 +412,7 @@ void Cylinder::update_combustion_zones(double dt) {
         double T_burned_current = burned_zone->temperature();
         
         // Calculate midpoint temperature
-        double T_midpoint = 0.5 * (T_unburned_current + T_burned_current);
+        double T_midpoint = 0.9 * (T_burned_current - T_unburned_current) + T_unburned_current;
         
         std::cout << "T_midpoint " << T_midpoint << " T_flame_current " << T_flame_current 
                   << " T_burned_current " << T_burned_current << " T_unburned_current " << T_unburned_current << std::endl;
@@ -430,10 +430,12 @@ void Cylinder::update_combustion_zones(double dt) {
             double max_energy_available = cp_burned * mass_burned * (T_burned_current - T_midpoint);  // [J]
             
             // Transfer the minimum of what's needed and what's available
+	    if (energy_deficit > max_energy_available) {
+		    std::cout << "bumping against the max energy " << energy_deficit/max_energy_available << std::endl;
+	    }
             double energy_transfer = std::min(energy_deficit, max_energy_available);
             
             if (energy_transfer > 0.0) {
-                std::cout << "energy moved: " << energy_transfer << " J" << std::endl;
                 
                 // Calculate new temperatures after energy transfer
                 double T_flame_new = T_flame_current + energy_transfer / (cp_flame * mass_flame);
@@ -446,6 +448,7 @@ void Cylinder::update_combustion_zones(double dt) {
                 
                 flame_zone->set_state_TPY(T_flame_new, P_current, Y_flame);
                 burned_zone->set_state_TPY(T_burned_new, P_current, Y_burned);
+                std::cout << "energy moved: " << energy_transfer << " J" << " new flame_zone->temperature() " << flame_zone->temperature() << std::endl;
             }
         }
     }
