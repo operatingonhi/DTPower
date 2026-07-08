@@ -406,37 +406,46 @@ void Cylinder::update_combustion_zones(double dt) {
     
     // Model thermal diffusion from burned zone to flame zone
     if (mass_flame > 1e-12 && mass_burned > 1e-12) {
-        // Get current specific enthalpies
-        double h_flame_current = flame_zone->enthalpy();
-        double h_unburned_current = unburned_zone->enthalpy();
-        double h_burned_current = burned_zone->enthalpy();
+        // Get current temperatures
+        double T_flame_current = flame_zone->temperature();
+        double T_unburned_current = unburned_zone->temperature();
+        double T_burned_current = burned_zone->temperature();
         
-        // Calculate midpoint specific enthalpy
-        double h_midpoint = 0.9 * (h_burned_current - h_unburned_current) + h_unburned_current;
-        std::cout << "h_midpoint " << h_midpoint << "h_flame_current " << h_flame_current << " h_burned_current " << h_burned_current << " h_unburned_current " << h_unburned_current << std::endl;
+        // Calculate midpoint temperature
+        double T_midpoint = 0.5 * (T_unburned_current + T_burned_current);
         
-        // Only transfer energy if flame zone is below midpoint
-        if (h_flame_current < h_midpoint) {
-            // Calculate energy needed to bring flame zone to midpoint
-            double energy_deficit = (h_midpoint - h_flame_current) * mass_flame;  // [J]
+        std::cout << "T_midpoint " << T_midpoint << " T_flame_current " << T_flame_current 
+                  << " T_burned_current " << T_burned_current << " T_unburned_current " << T_unburned_current << std::endl;
+        
+        // Only transfer energy if flame zone is below midpoint temperature
+        if (T_flame_current < T_midpoint) {
+            // Calculate energy needed to bring flame zone to midpoint temperature
+            // Use cp for constant pressure heat transfer
+            double cp_flame = flame_zone->cp();
+            double energy_deficit = cp_flame * mass_flame * (T_midpoint - T_flame_current);  // [J]
             
             // Calculate maximum energy available from burned zone
-            // Don't let burned zone cool below flame zone enthalpy
-            double max_energy_available = (h_burned_current - h_midpoint) * mass_burned;  // [J]
+            // Don't let burned zone cool below midpoint temperature
+            double cp_burned = burned_zone->cp();
+            double max_energy_available = cp_burned * mass_burned * (T_burned_current - T_midpoint);  // [J]
             
             // Transfer the minimum of what's needed and what's available
             double energy_transfer = std::min(energy_deficit, max_energy_available);
             
             if (energy_transfer > 0.0) {
-                std::cout << "energy moved" << std::endl;
-                // Update flame zone enthalpy
-                double h_flame_new = h_flame_current + energy_transfer / mass_flame;
-                double P_current = gas->pressure();
-                flame_zone->set_state_HP(h_flame_new, P_current);
+                std::cout << "energy moved: " << energy_transfer << " J" << std::endl;
                 
-                // Update burned zone enthalpy
-                double h_burned_new = h_burned_current - energy_transfer / mass_burned;
-                burned_zone->set_state_HP(h_burned_new, P_current);
+                // Calculate new temperatures after energy transfer
+                double T_flame_new = T_flame_current + energy_transfer / (cp_flame * mass_flame);
+                double T_burned_new = T_burned_current - energy_transfer / (cp_burned * mass_burned);
+                
+                // Update states at constant pressure
+                double P_current = gas->pressure();
+                auto Y_flame = flame_zone->mass_fractions();
+                auto Y_burned = burned_zone->mass_fractions();
+                
+                flame_zone->set_state_TPY(T_flame_new, P_current, Y_flame);
+                burned_zone->set_state_TPY(T_burned_new, P_current, Y_burned);
             }
         }
     }
