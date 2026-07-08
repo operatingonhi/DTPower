@@ -412,7 +412,8 @@ void Cylinder::update_combustion_zones(double dt) {
         double h_burned_current = burned_zone->enthalpy();
         
         // Calculate midpoint specific enthalpy
-        double h_midpoint = 0.5 * (h_unburned_current + h_burned_current);
+        double h_midpoint = 0.9 * (h_burned_current - h_unburned_current) + h_unburned_current;
+        std::cout << "h_midpoint " << h_midpoint << "h_flame_current " << h_flame_current << " h_burned_current " << h_burned_current << " h_unburned_current " << h_unburned_current << std::endl;
         
         // Only transfer energy if flame zone is below midpoint
         if (h_flame_current < h_midpoint) {
