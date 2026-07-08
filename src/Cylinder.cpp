@@ -516,6 +516,8 @@ void Cylinder::update_combustion_zones(double dt) {
     }
     
     // Calculate heat release rate from enthalpy change
+    // Note: Cantera enthalpy includes chemical energy, so enthalpy decreases during combustion
+    // Heat release rate is the negative of the enthalpy change rate
     double h_u_final = unburned_zone->enthalpy();
     double h_f_final = flame_zone->enthalpy();
     double h_b_final = burned_zone->enthalpy();
@@ -523,8 +525,8 @@ void Cylinder::update_combustion_zones(double dt) {
                                   h_f_final * mass_flame + 
                                   h_b_final * mass_burned;
     
-    double heat_release = total_enthalpy_final - total_enthalpy_initial;  // [J]
-    instantaneous_heat_release_rate = heat_release / dt;  // [W]
+    double enthalpy_change = total_enthalpy_final - total_enthalpy_initial;  // [J]
+    instantaneous_heat_release_rate = -enthalpy_change / dt;  // [W] (negative because enthalpy decreases)
     
     // Update flame radius based on burned mass
     double burned_volume = mass_burned / burned_zone->density();
@@ -701,6 +703,7 @@ void Cylinder::advance_chemistry(double dt) {
     } else if (!combustion_initiated) {
         // Only advance chemistry if combustion hasn't started yet
         // Calculate heat release rate from enthalpy change
+        // Note: Cantera enthalpy includes chemical energy, so enthalpy decreases during combustion
         double h_initial = gas->enthalpy();
         double total_enthalpy_initial = h_initial * mass;
 
@@ -708,8 +711,8 @@ void Cylinder::advance_chemistry(double dt) {
 
         double h_final = gas->enthalpy();
         double total_enthalpy_final = h_final * mass;
-        double heat_release = total_enthalpy_final - total_enthalpy_initial;  // [J]
-        instantaneous_heat_release_rate = heat_release / dt;  // [W]
+        double enthalpy_change = total_enthalpy_final - total_enthalpy_initial;  // [J]
+        instantaneous_heat_release_rate = -enthalpy_change / dt;  // [W] (negative because enthalpy decreases)
     } else {
         instantaneous_heat_release_rate = 0.0;  // [W]
     }
