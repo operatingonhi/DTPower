@@ -411,36 +411,52 @@ void Cylinder::update_combustion_zones(double dt) {
         double T_unburned_current = unburned_zone->temperature();
         double T_burned_current = burned_zone->temperature();
         
-        // Calculate midpoint temperature
-        double T_midpoint = 0.9 * (T_burned_current - T_unburned_current) + T_unburned_current;
+        // Calculate target temperature (fraction of temperature difference from unburned)
+        double T_target = 0.9 * (T_burned_current - T_unburned_current) + T_unburned_current;
         
-        std::cout << "T_midpoint " << T_midpoint << " T_flame_current " << T_flame_current 
+        std::cout << "T_target " << T_target << " T_flame_current " << T_flame_current 
                   << " T_burned_current " << T_burned_current << " T_unburned_current " << T_unburned_current << std::endl;
         
-        // Only transfer energy if flame zone is below midpoint temperature
-        if (T_flame_current < T_midpoint) {
-            // Calculate energy needed to bring flame zone to midpoint temperature
-            // Use cp for constant pressure heat transfer
+        // Only transfer energy if flame zone is below target temperature
+        if (T_flame_current < T_target) {
+            // Get specific heats for both zones
             double cp_flame = flame_zone->cp();
-            double energy_deficit = cp_flame * mass_flame * (T_midpoint - T_flame_current);  // [J]
-            
-            // Calculate maximum energy available from burned zone
-            // Don't let burned zone cool below midpoint temperature
             double cp_burned = burned_zone->cp();
-            double max_energy_available = cp_burned * mass_burned * (T_burned_current - T_midpoint);  // [J]
             
-            // Transfer the minimum of what's needed and what's available
-	    if (energy_deficit > max_energy_available) {
-		    std::cout << "bumping against the max energy " << energy_deficit/max_energy_available << std::endl;
-	    }
-            double energy_transfer = std::min(energy_deficit, max_energy_available);
+            // Calculate energy needed to bring flame zone to target temperature
+            double energy_deficit = cp_flame * mass_flame * (T_target - T_flame_current);  // [J]
+            
+            // Calculate maximum energy available from burned zone to reach target
+            double max_energy_to_target = cp_burned * mass_burned * (T_burned_current - T_target);  // [J]
+            
+            // Determine actual energy transfer and final temperatures
+            double energy_transfer;
+            double T_flame_new;
+            double T_burned_new;
+            
+            if (energy_deficit <= max_energy_to_target) {
+                // Sufficient energy available: flame reaches target temperature
+                energy_transfer = energy_deficit;
+                T_flame_new = T_target;
+                T_burned_new = T_burned_current - energy_transfer / (cp_burned * mass_burned);
+            } else {
+                // Insufficient energy: solve for equilibrium temperature algebraically
+                // At equilibrium: cp_burned * mass_burned * (T_burned - T_eq) = cp_flame * mass_flame * (T_eq - T_flame)
+                // Solving for T_eq:
+                double thermal_mass_flame = cp_flame * mass_flame;
+                double thermal_mass_burned = cp_burned * mass_burned;
+                double T_equilibrium = (thermal_mass_burned * T_burned_current + thermal_mass_flame * T_flame_current) 
+                                     / (thermal_mass_burned + thermal_mass_flame);
+                
+                std::cout << "Insufficient energy to reach target. Equilibrium T=" << T_equilibrium 
+                          << " (target was " << T_target << ")" << std::endl;
+                
+                T_flame_new = T_equilibrium;
+                T_burned_new = T_equilibrium;
+                energy_transfer = thermal_mass_flame * (T_equilibrium - T_flame_current);
+            }
             
             if (energy_transfer > 0.0) {
-                
-                // Calculate new temperatures after energy transfer
-                double T_flame_new = T_flame_current + energy_transfer / (cp_flame * mass_flame);
-                double T_burned_new = T_burned_current - energy_transfer / (cp_burned * mass_burned);
-                
                 // Update states at constant pressure
                 double P_current = gas->pressure();
                 auto Y_flame = flame_zone->mass_fractions();
@@ -448,7 +464,9 @@ void Cylinder::update_combustion_zones(double dt) {
                 
                 flame_zone->set_state_TPY(T_flame_new, P_current, Y_flame);
                 burned_zone->set_state_TPY(T_burned_new, P_current, Y_burned);
-                std::cout << "energy moved: " << energy_transfer << " J" << " new flame_zone->temperature() " << flame_zone->temperature() << std::endl;
+                std::cout << "energy moved: " << energy_transfer << " J" 
+                          << " new flame T=" << flame_zone->temperature() 
+                          << " new burned T=" << burned_zone->temperature() << std::endl;
             }
         }
     }
