@@ -403,6 +403,42 @@ void Cylinder::update_combustion_zones(double dt) {
             flame_zone->set_state_UV(u_flame_mixed, (1/rho_u*dm_in + 1/rho_f*mass_flame_old)/mass_flame);
         }
     }
+    
+    // Model thermal diffusion from burned zone to flame zone
+    if (mass_flame > 1e-12 && mass_burned > 1e-12) {
+        // Get current specific internal energies
+        double u_flame_current = flame_zone->internal_energy();
+        double u_unburned_current = unburned_zone->internal_energy();
+        double u_burned_current = burned_zone->internal_energy();
+        
+        // Calculate midpoint specific internal energy
+        double u_midpoint = 0.5 * (u_unburned_current + u_burned_current);
+        
+        // Only transfer energy if flame zone is below midpoint
+        if (u_flame_current < u_midpoint) {
+            // Calculate energy needed to bring flame zone to midpoint
+            double energy_deficit = (u_midpoint - u_flame_current) * mass_flame;  // [J]
+            
+            // Calculate maximum energy available from burned zone
+            // Don't let burned zone cool below flame zone temperature
+            double max_energy_available = (u_burned_current - u_midpoint) * mass_burned;  // [J]
+            
+            // Transfer the minimum of what's needed and what's available
+            double energy_transfer = std::min(energy_deficit, max_energy_available);
+            
+            if (energy_transfer > 0.0) {
+                // Update flame zone internal energy
+                double u_flame_new = u_flame_current + energy_transfer / mass_flame;
+                double v_flame = 1.0 / flame_zone->density();
+                flame_zone->set_state_UV(u_flame_new, v_flame);
+                
+                // Update burned zone internal energy
+                double u_burned_new = u_burned_current - energy_transfer / mass_burned;
+                double v_burned = 1.0 / burned_zone->density();
+                burned_zone->set_state_UV(u_burned_new, v_burned);
+            }
+        }
+    }
 
     // Store initial enthalpies for heat release calculation (cache these values)
     double h_u_initial = unburned_zone->enthalpy();
