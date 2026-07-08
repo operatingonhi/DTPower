@@ -406,37 +406,36 @@ void Cylinder::update_combustion_zones(double dt) {
     
     // Model thermal diffusion from burned zone to flame zone
     if (mass_flame > 1e-12 && mass_burned > 1e-12) {
-        // Get current specific internal energies
-        double u_flame_current = flame_zone->internal_energy();
-        double u_unburned_current = unburned_zone->internal_energy();
-        double u_burned_current = burned_zone->internal_energy();
+        // Get current specific enthalpies
+        double h_flame_current = flame_zone->enthalpy();
+        double h_unburned_current = unburned_zone->enthalpy();
+        double h_burned_current = burned_zone->enthalpy();
         
-        // Calculate midpoint specific internal energy
-        double u_midpoint = 0.5 * (u_unburned_current + u_burned_current);
+        // Calculate midpoint specific enthalpy
+        double h_midpoint = 0.5 * (h_unburned_current + h_burned_current);
         
         // Only transfer energy if flame zone is below midpoint
-        if (u_flame_current < u_midpoint) {
+        if (h_flame_current < h_midpoint) {
             // Calculate energy needed to bring flame zone to midpoint
-            double energy_deficit = (u_midpoint - u_flame_current) * mass_flame;  // [J]
+            double energy_deficit = (h_midpoint - h_flame_current) * mass_flame;  // [J]
             
             // Calculate maximum energy available from burned zone
-            // Don't let burned zone cool below flame zone temperature
-            double max_energy_available = (u_burned_current - u_midpoint) * mass_burned;  // [J]
+            // Don't let burned zone cool below flame zone enthalpy
+            double max_energy_available = (h_burned_current - h_midpoint) * mass_burned;  // [J]
             
             // Transfer the minimum of what's needed and what's available
             double energy_transfer = std::min(energy_deficit, max_energy_available);
             
             if (energy_transfer > 0.0) {
-		std::cout << "energy moved" << std::endl;
-                // Update flame zone internal energy
-                double u_flame_new = u_flame_current + energy_transfer / mass_flame;
-                double v_flame = 1.0 / flame_zone->density();
-                flame_zone->set_state_UV(u_flame_new, v_flame);
+                std::cout << "energy moved" << std::endl;
+                // Update flame zone enthalpy
+                double h_flame_new = h_flame_current + energy_transfer / mass_flame;
+                double P_current = gas->pressure();
+                flame_zone->set_state_HP(h_flame_new, P_current);
                 
-                // Update burned zone internal energy
-                double u_burned_new = u_burned_current - energy_transfer / mass_burned;
-                double v_burned = 1.0 / burned_zone->density();
-                burned_zone->set_state_UV(u_burned_new, v_burned);
+                // Update burned zone enthalpy
+                double h_burned_new = h_burned_current - energy_transfer / mass_burned;
+                burned_zone->set_state_HP(h_burned_new, P_current);
             }
         }
     }
