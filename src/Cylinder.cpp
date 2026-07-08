@@ -427,6 +427,7 @@ void Cylinder::update_combustion_zones(double dt) {
             double energy_transfer = std::min(energy_deficit, max_energy_available);
             
             if (energy_transfer > 0.0) {
+		std::cout << "energy moved" << std::endl;
                 // Update flame zone internal energy
                 double u_flame_new = u_flame_current + energy_transfer / mass_flame;
                 double v_flame = 1.0 / flame_zone->density();
