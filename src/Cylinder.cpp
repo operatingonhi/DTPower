@@ -413,7 +413,32 @@ void Cylinder::update_combustion_zones(double dt) {
     
     // Advance chemistry in all zones (reactions progress here)
     if (mass_flame > 1e-12) {
+        // Get species names to find indices
+        auto species_names = flame_zone->species_names();
+        auto Y_before = flame_zone->mass_fractions();
+        size_t idx_H2 = std::distance(species_names.begin(), std::find(species_names.begin(), species_names.end(), "H2"));
+        size_t idx_H2O = std::distance(species_names.begin(), std::find(species_names.begin(), species_names.end(), "H2O"));
+        size_t idx_O2 = std::distance(species_names.begin(), std::find(species_names.begin(), species_names.end(), "O2"));
+        
+        double T_before = flame_zone->temperature();
+        double h_before = flame_zone->enthalpy();
+        double Y_H2_before = (idx_H2 < Y_before.size()) ? Y_before[idx_H2] : 0.0;
+        double Y_H2O_before = (idx_H2O < Y_before.size()) ? Y_before[idx_H2O] : 0.0;
+        double Y_O2_before = (idx_O2 < Y_before.size()) ? Y_before[idx_O2] : 0.0;
+        
         flame_zone->advance_chemistry(dt);
+        
+        auto Y_after = flame_zone->mass_fractions();
+        double T_after = flame_zone->temperature();
+        double h_after = flame_zone->enthalpy();
+        double Y_H2_after = (idx_H2 < Y_after.size()) ? Y_after[idx_H2] : 0.0;
+        double Y_H2O_after = (idx_H2O < Y_after.size()) ? Y_after[idx_H2O] : 0.0;
+        double Y_O2_after = (idx_O2 < Y_after.size()) ? Y_after[idx_O2] : 0.0;
+        
+        std::cout << "Flame zone before: T=" << T_before << " h=" << h_before 
+                  << " H2=" << Y_H2_before << " H2O=" << Y_H2O_before << " O2=" << Y_O2_before
+                  << " | after: T=" << T_after << " h=" << h_after
+                  << " H2=" << Y_H2_after << " H2O=" << Y_H2O_after << " O2=" << Y_O2_after << std::endl;
     }
     if (mass_burned > 1e-12) {
         burned_zone->advance_chemistry(dt);
