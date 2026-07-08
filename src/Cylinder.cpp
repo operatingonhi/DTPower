@@ -173,12 +173,12 @@ double Cylinder::calculate_mass_flow_into_flame(double dt) {
         return 0.0;
     }
     
-    // Recalculate adiabatic flame temperature at current pressure
-    calculate_adiabatic_flame_temperature();
-    target_flame_temp = flame_temp_fraction * adiabatic_flame_temp;
-    
     double T_flame = flame_zone->temperature();
     double T_unburned = unburned_zone->temperature();
+    
+    // Recalculate adiabatic flame temperature at current pressure
+    calculate_adiabatic_flame_temperature();
+    target_flame_temp = flame_temp_fraction * (adiabatic_flame_temp - T_unburned) + T_unburned;
     
     // Temperature error: positive means flame is too hot, negative means too cold
     double temp_error = T_flame - target_flame_temp;
@@ -224,8 +224,6 @@ double Cylinder::calculate_mass_flow_into_flame(double dt) {
     mass_flow_in = std::max(0.0, mass_flow_in);
     
     // Limit mass flow to available unburned mass or half of flame zone
-    double max_flow = mass_unburned / 1e-4;  // Don't consume all mass in 0.1 ms
-    mass_flow_in = std::min(mass_flow_in, max_flow);
     mass_flow_in = std::min(mass_flow_in, mass_flame/(2.0*dt));
     
     return mass_flow_in;
@@ -271,11 +269,6 @@ double Cylinder::calculate_mass_flow_out_of_flame(double mass_flow_in) {
 }
 
 void Cylinder::update_combustion_zones(double dt) {
-    if (!combustion_active || mass_unburned <= 1e-12) {
-        combustion_active = false;
-        instantaneous_heat_release_rate = 0.0;
-        return;
-    }
     
     // Get current pressure after volume change (from main gas object)
     double P = gas->pressure();
@@ -357,19 +350,6 @@ void Cylinder::update_combustion_zones(double dt) {
     dm_in = std::min(dm_in, mass_unburned);
     dm_out = std::min(dm_out, mass_flame);
     
-    if (dm_in <= 0.0 && dm_out <= 0.0) {
-        combustion_active = false;
-        instantaneous_heat_release_rate = 0.0;
-        return;
-    }
-    
-    // Store initial enthalpies for heat release calculation (cache these values)
-    double h_u_initial = unburned_zone->enthalpy();
-    double h_f_initial = flame_zone->enthalpy();
-    double h_b_initial = burned_zone->enthalpy();
-    double total_enthalpy_initial = h_u_initial * mass_unburned + 
-                                    h_f_initial * mass_flame + 
-                                    h_b_initial * mass_burned;
     double u_u_initial = unburned_zone->internal_energy();
     double u_f_initial = flame_zone->internal_energy();
     double u_b_initial = burned_zone->internal_energy();
@@ -422,6 +402,14 @@ void Cylinder::update_combustion_zones(double dt) {
             flame_zone->set_state_UV(u_flame_mixed, (1/rho_u*dm_in + 1/rho_f*mass_flame_old)/mass_flame);
         }
     }
+
+    // Store initial enthalpies for heat release calculation (cache these values)
+    double h_u_initial = unburned_zone->enthalpy();
+    double h_f_initial = flame_zone->enthalpy();
+    double h_b_initial = burned_zone->enthalpy();
+    double total_enthalpy_initial = h_u_initial * mass_unburned + 
+                                    h_f_initial * mass_flame + 
+                                    h_b_initial * mass_burned;
     
     // Advance chemistry in all zones (reactions progress here)
     if (mass_flame > 1e-12) {
@@ -450,7 +438,7 @@ void Cylinder::update_combustion_zones(double dt) {
     flame_radius = std::pow(3.0 * burned_volume / (4.0 * M_PI), 1.0/3.0);
     
     // Check if combustion is complete
-    if (mass_unburned < 1e-12 && mass_flame < 1e-12) {
+    if (std::abs(instantaneous_heat_release_rate) < 1e-18) {
         combustion_active = false;
     }
 }
@@ -619,7 +607,18 @@ void Cylinder::advance_chemistry(double dt) {
         mix_zones_to_cylinder();
     } else if (!combustion_initiated) {
         // Only advance chemistry if combustion hasn't started yet
+        // Calculate heat release rate from enthalpy change
+        double h_initial = gas->enthalpy();
+        double total_enthalpy_initial = h_initial * mass;
+
         gas->advance_chemistry(dt);
+
+        double h_final = gas->enthalpy();
+        double total_enthalpy_final = h_final * mass;
+        double heat_release = total_enthalpy_final - total_enthalpy_initial;  // [J]
+        instantaneous_heat_release_rate = heat_release / dt;  // [W]
+    } else {
+        instantaneous_heat_release_rate = 0.0;  // [W]
     }
 }
 
@@ -659,7 +658,6 @@ double Cylinder::get_heat_transfer_rate() const {
 double Cylinder::get_heat_release_rate() {
     // Return and reset instantaneous heat release rate
     double heat_release = instantaneous_heat_release_rate;
-    instantaneous_heat_release_rate = 0.0;
     return heat_release;
 }
 
