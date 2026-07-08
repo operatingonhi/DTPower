@@ -224,8 +224,9 @@ double Cylinder::calculate_mass_flow_into_flame(double dt) {
     mass_flow_in = std::max(0.0, mass_flow_in);
     
     // Limit mass flow to available unburned mass or half of flame zone
-    mass_flow_in = std::min(mass_flow_in, mass_flame/(2.0*dt));
+    mass_flow_in = std::min(mass_unburned/2.0/dt,std::min(mass_flow_in, mass_flame/(2.0*dt)));
     
+    std::cout << "mass_flow_in=" << mass_flow_in << std::endl; 
     return mass_flow_in;
 }
 
