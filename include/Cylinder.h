@@ -39,7 +39,7 @@ private:
     
     // Helper methods for combustion model
     void initialize_combustion_zones();
-    void calculate_adiabatic_flame_temperature();
+    void calculate_adiabatic_flame_temperature(CanteraInterface* zone);
     void update_combustion_zones(double dt);
     double calculate_mass_flow_into_flame(double dt);
     double calculate_mass_flow_out_of_flame(double mass_flow_in);
