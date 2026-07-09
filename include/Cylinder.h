@@ -31,9 +31,8 @@ private:
     double target_flame_temp;    // Target flame zone temperature (0.75 * Tad) [K]
     
     // Combustion model parameters
-    const double flame_temp_fraction = 0.75;  // Fraction of adiabatic flame temp
-    const double flame_shell_thickness = 0.001; // Flame shell thickness [m]
-    const double initial_flame_radius = 0.001; // Initial flame kernel radius [m]
+    const double flame_temp_fraction = 0.5;  // Fraction of adiabatic flame temp
+    const double flame_shell_thickness = 1.0e-3; // Flame shell thickness [m]
     double flame_radius;                      // Current flame radius [m]
     
     std::string mechanism_file;  // Store mechanism file path for temp gas objects
