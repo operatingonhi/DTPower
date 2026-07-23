@@ -31,7 +31,7 @@ private:
     double target_flame_temp;    // Target flame zone temperature (0.75 * Tad) [K]
     
     // Combustion model parameters
-    const double flame_temp_fraction = 0.5;  // Fraction of adiabatic flame temp
+    const double flame_temp_fraction = 0.1;  // Fraction of adiabatic flame temp
     const double flame_shell_thickness = 1.0e-3; // Flame shell thickness [m]
     double flame_radius;                      // Current flame radius [m]
     

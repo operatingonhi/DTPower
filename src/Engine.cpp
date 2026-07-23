@@ -362,7 +362,7 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
         }
         
         // Check if we're in a reactive phase requiring smaller time steps
-        const double reactive_temperature_threshold = 800.0;  // [K]
+        const double reactive_temperature_threshold = 600.0;  // [K]
         double spark_power = 0.0;
         bool reactive_phase = false;
         

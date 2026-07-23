@@ -112,7 +112,7 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
         initialize_combustion_zones();
         
         // Calculate adiabatic flame temperature for current conditions
-        calculate_adiabatic_flame_temperature();
+        calculate_adiabatic_flame_temperature(unburned_zone.get());
         
         // Set target flame temperature
         target_flame_temp = flame_temp_fraction * adiabatic_flame_temp;
@@ -132,7 +132,7 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
 void Cylinder::initialize_combustion_zones() {
     // Initialize all zones with current cylinder state
     double T = gas->temperature();
-    double T_spark = 2000; 
+    double T_spark = 3000; 
     double T_ign = T_spark;
     double sparkm_ratio = 0.01;
     double P = gas->pressure();
@@ -141,28 +141,31 @@ void Cylinder::initialize_combustion_zones() {
     // Unburned zone starts with all the mass
     unburned_zone->set_state_TPY(T, P, Y);
     double rho_u = unburned_zone->density();
-    mass_unburned = mass*(1-sparkm_ratio);
+    mass_unburned = mass*(1-5*sparkm_ratio-sparkm_ratio);
     
     // Flame zone starts with a small initial kernel
     flame_zone->set_state_TPY(T_ign, P, Y);
     mass_flame = mass*sparkm_ratio;  // Very small initial mass
     
     // Burned zone starts empty
+    mass_burned = mass*5*sparkm_ratio;
     burned_zone->set_state_TPY(T, P, Y);
-    mass_burned = 0.0;
+    std::cout << "\nburned_zone->temperature() " <<  burned_zone->temperature() << std::endl;
+    burned_zone->get_solution()->thermo()->equilibrate("HP");
+    std::cout << "\nburned_zone->temperature() " <<  burned_zone->temperature() << std::endl;
 }
 
-void Cylinder::calculate_adiabatic_flame_temperature() {
-    // Reuse persistent gas object for adiabatic flame calculation
-    // Set to current unburned conditions at current cylinder pressure
-    double T_u = unburned_zone->temperature();
-    double P = gas->pressure();  // Use current cylinder pressure
-    std::vector<double> Y_u = unburned_zone->mass_fractions();
-    adiabatic_gas->set_state_TPY(T_u, P, Y_u);
-    
-    // Equilibrate at constant enthalpy and pressure to get adiabatic flame temperature
-    adiabatic_gas->get_solution()->thermo()->equilibrate("HP");
-    adiabatic_flame_temp = adiabatic_gas->temperature();
+void Cylinder::calculate_adiabatic_flame_temperature(CanteraInterface* zone) {                                              
+    // Reuse persistent gas object for adiabatic flame calculation                                                          
+    // Set to current zone conditions at current cylinder pressure                                                          
+    double T_zone = zone->temperature();                                                                                    
+    double P = gas->pressure();  // Use current cylinder pressure                                                           
+    std::vector<double> Y_zone = zone->mass_fractions();                                                                    
+    adiabatic_gas->set_state_TPY(T_zone, P, Y_zone);                                                                        
+                                                                                                                            
+    // Equilibrate at constant enthalpy and pressure to get adiabatic flame temperature                                     
+    adiabatic_gas->get_solution()->thermo()->equilibrate("HP");                                                             
+    adiabatic_flame_temp = adiabatic_gas->temperature();                                                                    
 }
 
 double Cylinder::calculate_mass_flow_into_flame(double dt) {
@@ -177,7 +180,7 @@ double Cylinder::calculate_mass_flow_into_flame(double dt) {
     double T_unburned = unburned_zone->temperature();
     
     // Recalculate adiabatic flame temperature at current pressure
-    calculate_adiabatic_flame_temperature();
+    calculate_adiabatic_flame_temperature(burned_zone.get());
     target_flame_temp = flame_temp_fraction * (adiabatic_flame_temp - T_unburned) + T_unburned;
     
     // Temperature error: positive means flame is too hot, negative means too cold
@@ -224,7 +227,7 @@ double Cylinder::calculate_mass_flow_into_flame(double dt) {
     mass_flow_in = std::max(0.0, mass_flow_in);
     
     // Limit mass flow to available unburned mass or half of flame zone
-    mass_flow_in = std::min(mass_unburned/2.0/dt,std::min(mass_flow_in, mass_flame/(2.0*dt)));
+    mass_flow_in = std::min(mass_unburned/2.0/dt,std::min(mass_flow_in, mass_flame/dt*7.0/8.0));
     
     std::cout << "mass_flow_in=" << mass_flow_in << std::endl; 
     return mass_flow_in;
@@ -412,7 +415,7 @@ void Cylinder::update_combustion_zones(double dt) {
         double T_burned_current = burned_zone->temperature();
         
         // Calculate target temperature (fraction of temperature difference from unburned)
-        double T_target = 0.9 * (T_burned_current - T_unburned_current) + T_unburned_current;
+        double T_target = 1.0 * (T_burned_current - T_unburned_current) + T_unburned_current;
         
         std::cout << "T_target " << T_target << " T_flame_current " << T_flame_current 
                   << " T_burned_current " << T_burned_current << " T_unburned_current " << T_unburned_current << std::endl;
