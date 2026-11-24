@@ -1,0 +1,30 @@
+# Step sizes and output intervals are in crank angle degrees.
+time_stepping:
+  crank_angle_step: 0.25
+  min_angle_step: 0.25
+  max_angle_step: 0.5
+  adaptive_stepping: true
+
+heat_transfer:
+  woschni_c1: 3.26
+  woschni_c2: 2.28
+  woschni_c3: 3.24e-3
+
+friction:
+  cf_c1: 0.0097
+  cf_c2: 0.00015
+  cf_c3: 0.00005
+  cf_c4: 0.0
+
+simulation:
+  output_interval: 0.5
+  start_angle: 0.0
+  end_angle: 720.0
+  equilibrium_expansion: true
+
+# Required by the current input schema.
+tolerances:
+  temperature_min: 200.0       # K
+  temperature_max: 4000.0      # K
+  pressure_min: 1000.0         # Pa
+  pressure_max: 1.0e8          # Pa

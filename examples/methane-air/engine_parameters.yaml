@@ -1,0 +1,38 @@
+mechanism_file: gri30.yaml
+
+geometry:
+  bore: 0.086                   # m
+  stroke: 0.086                 # m
+  connecting_rod_length: 0.143  # m
+  compression_ratio: 10.0
+
+operating_conditions:
+  engine_speed: 2000.0          # rpm
+  intake_pressure: 101325.0     # Pa
+  exhaust_pressure: 101325.0    # Pa
+  intake_temperature: 300.0     # K
+  wall_temperature: 470.0       # K
+  intake_composition: "CH4:1, O2:2, N2:7.52"  # Cantera mole ratios
+
+spark:
+  enabled: true
+  timing_btdc: 10.0            # Crank angle degrees before compression TDC
+  duration: 2.0                # Crank angle degrees
+  energy: 5.0e7                # Amplitude of the crank-angle spark profile
+
+# Valve angles are in crank angle degrees from intake TDC.
+valves:
+  intake:
+    open_angle: 0.0
+    close_angle: 180.0
+    max_lift: 0.008            # m
+    diameter: 0.034            # m
+    seat_diameter: 0.030       # m
+    discharge_coefficient: 0.6
+  exhaust:
+    open_angle: 540.0
+    close_angle: 720.0
+    max_lift: 0.008            # m
+    diameter: 0.030            # m
+    seat_diameter: 0.026       # m
+    discharge_coefficient: 0.6

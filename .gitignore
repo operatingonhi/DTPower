@@ -1,0 +1,14 @@
+.aider*
+
+# Local CMake builds and user presets
+/build/
+/build-*/
+/cmake-build-*/
+/CMakeUserPresets.json
+gmon.out
+
+# Simulator output
+engine_results.csv
+engine_performance.csv
+motored_results.csv
+combustion_diagnostics.csv

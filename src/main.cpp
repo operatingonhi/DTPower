@@ -123,9 +123,6 @@ int main() {
         // Run simulation
         engine.run_cycle();
         
-        // Output results
-        engine.output_results("engine_results.csv");
-        
         // Output performance summary
         engine.output_performance_summary("engine_performance.csv");
         

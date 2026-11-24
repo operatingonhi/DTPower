@@ -1,118 +1,85 @@
-cmake_minimum_required(VERSION 3.10)                                              
-project(EngineSimulation)
-set(CMAKE_CXX_STANDARD 17)                                                                                                                                          
-# Detect if we're cross-compiling for Windows 
-if(CMAKE_CROSSCOMPILING AND WIN32)
-	set(CROSS_COMPILING_WINDOWS TRUE)
-	message(STATUS "Cross-compiling for Windows")
-else()
-	set(CROSS_COMPILING_WINDOWS FALSE)
-endif()                                                                                                                                                             
-# Add debug and profiling options
-option(ENABLE_PROFILING "Enable detailed profiling output" OFF)
-option(ENABLE_DEBUG "Enable debug output and checks" OFF)   
+cmake_minimum_required(VERSION 3.18)
+project(EngineSimulation LANGUAGES CXX)
+
+include(GNUInstallDirs)
+
+option(ENABLE_PROFILING "Enable detailed profiling output and gprof instrumentation" OFF)
+option(ENABLE_DEBUG "Enable debug output and checks" OFF)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_library(engine_build_options INTERFACE)
+target_include_directories(engine_build_options INTERFACE include)
 
 if(ENABLE_DEBUG)
-	set(CMAKE_BUILD_TYPE Debug)                                                                                                                                                                                                                               
-    add_compile_definitions(DEBUG_MODE)                                                                                                                                                                                                                       
-    set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra")                                                                                                                                                                                                         
-endif()                                                                                                                                                                                                                                                       
+    target_compile_definitions(engine_build_options INTERFACE DEBUG_MODE)
+    if(MSVC)
+        target_compile_options(engine_build_options INTERFACE /Zi /Od /W4)
+        target_link_options(engine_build_options INTERFACE /DEBUG)
+    else()
+        target_compile_options(engine_build_options INTERFACE -g -O0 -Wall -Wextra)
+    endif()
+endif()
 
 if(ENABLE_PROFILING)
-    add_compile_definitions(PROFILING_ENABLED)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg") 
+    target_compile_definitions(engine_build_options INTERFACE PROFILING_ENABLED)
+    target_compile_options(engine_build_options INTERFACE -pg)
+    target_link_options(engine_build_options INTERFACE -pg)
 endif()
 
-                                                                                  
-if(CROSS_COMPILING_WINDOWS)
-    # Use pre-compiled Cantera for Windows cross-compilation
-    #set(CANTERA_ROOT "/home/dev/workspace/cantera")
-    #set(CANTERA_INCLUDE_DIRS "${CANTERA_ROOT}/include")
-    #set(CANTERA_LIBRARIES "${CANTERA_ROOT}/build/lib/libcantera.a")
-    
-    set(YAML_CPP_ROOT "/home/dev/workspace/yaml-cpp")
-    set(YAML_CPP_INCLUDE_DIRS "${YAML_CPP_ROOT}/include/")
-    set(YAML_CPP_LIBRARIES "${YAML_CPP_ROOT}/libyaml-cpp.a")
-    
-    # Windows-specific libraries that Cantera might need
-    set(PLATFORM_LIBRARIES ws2_32 advapi32)
-    
-    # Static linking flags for MinGW
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++ -static")
-    
-    # Workaround for missing mutex includes in Cantera headers
-    add_compile_definitions(_WIN32_WINNT=0x0601)
-    add_compile_definitions(YAML_CPP_STATIC_DEFINE)
-    add_compile_options(-include mutex)
-    
+if(CMAKE_CROSSCOMPILING AND WIN32)
+    # Supply target libraries and headers via the toolchain or CMake cache.
+    foreach(variable IN ITEMS CANTERA_INCLUDE_DIRS CANTERA_LIBRARIES
+                              YAML_CPP_INCLUDE_DIRS YAML_CPP_LIBRARIES)
+        if(NOT ${variable})
+            message(FATAL_ERROR "Set ${variable} for the Windows target.")
+        endif()
+    endforeach()
+    target_include_directories(engine_build_options SYSTEM INTERFACE
+        ${CANTERA_INCLUDE_DIRS} ${YAML_CPP_INCLUDE_DIRS})
+    if(CANTERA_LIBRARY_DIRS)
+        target_link_directories(engine_build_options INTERFACE ${CANTERA_LIBRARY_DIRS})
+    endif()
+    target_link_libraries(engine_build_options INTERFACE
+        ${CANTERA_LIBRARIES} ${YAML_CPP_LIBRARIES} ws2_32 advapi32)
+    target_compile_definitions(engine_build_options INTERFACE
+        _WIN32_WINNT=0x0601 YAML_CPP_STATIC_DEFINE)
+    target_compile_options(engine_build_options INTERFACE -include mutex)
+    target_link_options(engine_build_options INTERFACE -static-libgcc -static-libstdc++ -static)
 else()
-    # Native compilation - use pkg-config
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(CANTERA REQUIRED cantera)
-
-    find_package(BLAS REQUIRED)
+    pkg_check_modules(CANTERA REQUIRED IMPORTED_TARGET cantera)
+    pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
     find_package(LAPACK REQUIRED)
-    
-    pkg_check_modules(YAML_CPP REQUIRED yaml-cpp)
-    set(PLATFORM_LIBRARIES ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+    target_link_libraries(engine_build_options INTERFACE
+        PkgConfig::CANTERA PkgConfig::YAML_CPP LAPACK::LAPACK)
 endif()
 
-include_directories(include)                                                      
-                                                                                  
-set(SOURCES                                                                       
-    src/main.cpp                                                                  
-    src/Engine.cpp                                                                
-    src/Cylinder.cpp                                                              
-    src/WoschniHeatTransfer.cpp                                                   
-    src/ValveFlow.cpp                                                             
-    src/FrictionModel.cpp                                                         
-    src/Crankshaft.cpp                                                            
+add_executable(engine_sim
+    src/main.cpp
+    src/Engine.cpp
+    src/Cylinder.cpp
+    src/WoschniHeatTransfer.cpp
+    src/ValveFlow.cpp
+    src/FrictionModel.cpp
+    src/Crankshaft.cpp
     src/SparkModel.cpp
     src/CanteraInterface.cpp
     src/ConfigLoader.cpp
-)                                                                                 
-                                                                                  
-add_executable(engine_sim ${SOURCES})                                             
-                                                                                  
-target_link_directories(engine_sim PRIVATE
-    ${CANTERA_LIBRARY_DIRS}
 )
+target_link_libraries(engine_sim PRIVATE engine_build_options)
 
-target_link_libraries(engine_sim 
-    ${CANTERA_LIBRARIES} 
-    ${YAML_CPP_LIBRARIES}
-    ${PLATFORM_LIBRARIES}
-)
-target_include_directories(engine_sim PRIVATE 
-    ${CANTERA_INCLUDE_DIRS}
-    ${YAML_CPP_INCLUDE_DIRS}
-)
-if(CROSS_COMPILING_WINDOWS)
-    target_compile_definitions(engine_sim PRIVATE 
-        _WIN32_WINNT=0x0601
-        YAML_CPP_STATIC_DEFINE
-    )
-    target_compile_options(engine_sim PRIVATE -include mutex)
-else()
-    target_compile_options(engine_sim PRIVATE 
-        ${CANTERA_CFLAGS_OTHER}
-        ${YAML_CPP_CFLAGS_OTHER}
-    )
-endif()
+install(TARGETS engine_sim RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(DIRECTORY examples/ DESTINATION ${CMAKE_INSTALL_DATADIR}/dtpower/examples
+    FILES_MATCHING PATTERN "*_parameters.yaml")
 
-# Physical regression checks for the equilibrium thermodynamic updates.
 include(CTest)
-if(BUILD_TESTING AND NOT CROSS_COMPILING_WINDOWS)
+if(BUILD_TESTING AND NOT (CMAKE_CROSSCOMPILING AND WIN32))
     add_executable(equilibrium_expansion_test
         tests/equilibrium_expansion.cpp
         src/Cylinder.cpp src/CanteraInterface.cpp src/WoschniHeatTransfer.cpp)
-    target_include_directories(equilibrium_expansion_test PRIVATE
-        ${CANTERA_INCLUDE_DIRS} ${YAML_CPP_INCLUDE_DIRS})
-    target_link_directories(equilibrium_expansion_test PRIVATE ${CANTERA_LIBRARY_DIRS})
-    target_link_libraries(equilibrium_expansion_test PRIVATE
-        ${CANTERA_LIBRARIES} ${YAML_CPP_LIBRARIES} ${PLATFORM_LIBRARIES})
-    target_compile_options(equilibrium_expansion_test PRIVATE
-        ${CANTERA_CFLAGS_OTHER} ${YAML_CPP_CFLAGS_OTHER})
+    target_link_libraries(equilibrium_expansion_test PRIVATE engine_build_options)
     add_test(NAME equilibrium_expansion COMMAND equilibrium_expansion_test)
 endif()

@@ -4,21 +4,21 @@
 #include <cmath>
 #include <iostream>
 #include <chrono>
+#include <stdexcept>
 
 
 Engine::Engine(double cylinder_bore, double cylinder_stroke, double connecting_rod_length,
                double compression_ratio, const std::string& mechanism_file,
                const SimulationParameters& sim_params, const EngineParameters& engine_params)
-    : bore(cylinder_bore), stroke(cylinder_stroke), con_rod_length(connecting_rod_length),
+    : valves_flowing(false), bore(cylinder_bore), stroke(cylinder_stroke), con_rod_length(connecting_rod_length),
       compression_ratio(compression_ratio), engine_speed(1000.0), crank_angle(0.0),
       crank_angle_step(sim_params.time_stepping.crank_angle_step), time_step(0.0), 
       intake_pressure(101325.0), intake_temperature(300.0), exhaust_pressure(101325.0),
       intake_composition("O2:0.21, N2:0.79"), mechanism_file(mechanism_file),
       fuel_energy_rate(0.0), lower_heating_value(0.0),
-      sim_params(sim_params), engine_params(engine_params),
       total_lhv_energy(0.0), indicated_work(0.0), pumping_work(0.0), 
       friction_work(0.0), heat_transfer_loss(0.0), exhaust_energy_loss(0.0),
-      reference_enthalpy(0.0), T3(0.0), valves_flowing(false) {
+      reference_enthalpy(0.0), T3(0.0), sim_params(sim_params), engine_params(engine_params) {
     
     // Calculate clearance volume from compression ratio
     double displacement = M_PI * bore * bore / 4.0 * stroke;
@@ -530,7 +530,6 @@ double Engine::interpolate_motored_pressure(double angle, const std::vector<doub
     
     // Handle angles outside the motored data range by using modulo arithmetic
     // This allows the simulation to run beyond 720 degrees
-    double angle_range = angles.back() - angles.front();
     double normalized_angle = angle;
     
     // Normalize angle to be within the motored data range
@@ -582,6 +581,9 @@ void Engine::run_multiple_cycles(int num_cycles) {
 
 void Engine::output_results(const std::string& filename) {
     std::ofstream file(filename);
+    if (!file) {
+        throw std::runtime_error("Cannot open output file: " + filename);
+    }
     
     // Write header
     file << "CrankAngle[deg],Pressure[Pa],Temperature[K],Volume[m3],Mass[kg],HeatReleaseRate[W],HeatTransferRate[W],h_conv[W/(m2K)],SurfaceArea[m2],T_gas[K],FrictionPower[W],Gamma[-],PumpingWork[Pa],ExhaustEnergyLoss[J]";
@@ -633,6 +635,9 @@ void Engine::output_results(const std::string& filename) {
     }
     
     file.close();
+    if (!file) {
+        throw std::runtime_error("Cannot write output file: " + filename);
+    }
     std::cout << "Results written to " << filename << std::endl;
 }
 
@@ -800,6 +805,9 @@ void Engine::print_energy_ledger() const {
 
 void Engine::output_performance_summary(const std::string& filename) {
     std::ofstream file(filename);
+    if (!file) {
+        throw std::runtime_error("Cannot open output file: " + filename);
+    }
     
     // Write header with parameter names and units
     file << "Parameter,Value,Unit\n";
@@ -858,5 +866,8 @@ void Engine::output_performance_summary(const std::string& filename) {
     file << "T3 (Post-Combustion Temperature)," << T3 << ",K\n";
     
     file.close();
+    if (!file) {
+        throw std::runtime_error("Cannot write output file: " + filename);
+    }
     std::cout << "Performance summary written to " << filename << std::endl;
 }

@@ -65,7 +65,7 @@ bool ValveFlow::is_choked(double pressure_ratio) const {
 }
 
 double ValveFlow::calculate_mass_flow(double lift, double P_upstream, double P_downstream,
-                                     double T_upstream, double rho_upstream, double gamma) const {
+                                     double T_upstream, double /*rho_upstream*/, double gamma) const {
     if (lift <= 0.0) {
         return 0.0;
     }

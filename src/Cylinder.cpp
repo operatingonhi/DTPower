@@ -7,13 +7,15 @@
 
 Cylinder::Cylinder(double cylinder_bore, double cylinder_stroke, double clearance_vol,
                    const std::string& mechanism_file, double wall_temp)
-    : bore(cylinder_bore), stroke(cylinder_stroke), clearance_volume(clearance_vol),
-      wall_temperature(wall_temp), mass(0.0), volume(clearance_vol),
-      previous_volume(clearance_vol), combustion_active(false), combustion_initiated(false),
-      current_heat_transfer_rate(0.0), instantaneous_heat_release_rate(0.0),
+    : mass_unburned(0.0), mass_flame(0.0), mass_burned(0.0),
+      combustion_active(false), combustion_initiated(false),
       adiabatic_flame_temp(0.0), target_flame_temp(0.0), flame_radius(0.001),
-      mass_unburned(0.0), mass_flame(0.0), mass_burned(0.0),
-      mechanism_file(mechanism_file), logging_enabled(false) {
+      mechanism_file(mechanism_file),
+      bore(cylinder_bore), stroke(cylinder_stroke), clearance_volume(clearance_vol),
+      wall_temperature(wall_temp), mass(0.0), volume(clearance_vol),
+      previous_volume(clearance_vol),
+      current_heat_transfer_rate(0.0), instantaneous_heat_release_rate(0.0),
+      logging_enabled(false) {
     
     gas = std::make_unique<CanteraInterface>(mechanism_file);
     heat_transfer = std::make_unique<WoschniHeatTransfer>(bore, stroke, 3.26, 2.28, 3.24e-3);
@@ -114,16 +116,7 @@ void Cylinder::equilibrate_burned_gas(const std::string& constraints) {
 }
 
 void Cylinder::update_heat_transfer_parameters(double c1, double c2, double c3) {
-    // Store current reference values if they were set
-    bool had_reference_values = false;
-    double old_Tr = 300.0, old_Pr = 100.0, old_Vr = 0.0;
-    
-    if (heat_transfer) {
-        // Note: We can't directly access private members, so we'll lose reference values
-        // This is acceptable since update_heat_transfer_parameters is typically called
-        // before the simulation starts
-    }
-    
+    // Replacing the model clears the intake valve closure reference values.
     heat_transfer = std::make_unique<WoschniHeatTransfer>(bore, stroke, c1, c2, c3);
 }
 
@@ -259,7 +252,6 @@ void Cylinder::initialize_combustion_zones() {
     
     // Unburned zone starts with all the mass
     unburned_zone->set_state_TPY(T, P, Y);
-    double rho_u = unburned_zone->density();
     mass_unburned = mass*(1-5*sparkm_ratio-sparkm_ratio);
     
     // Flame zone starts with a small initial kernel
@@ -701,7 +693,7 @@ void Cylinder::mix_zones_to_cylinder() {
     gas->set_state_UV(u_avg, v_specific);
 }
 
-void Cylinder::heat_loss(double dt, double mean_piston_speed, double motored_pressure, bool valves_flowing) {
+void Cylinder::heat_loss(double dt, double mean_piston_speed, double motored_pressure, bool /*valves_flowing*/) {
     PROFILE_FUNCTION();
     
     // Get state after isentropic process
@@ -820,8 +812,7 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
     }
     combustion_active = false;
     
-    // Set state using enthalpy and pressure
-    double current_pressure = gas->pressure();
+    // Update the state using the new specific internal energy and volume.
     gas->set_state_UV(new_specific_energy, volume/mass);
     if (continue_equilibrium) {
         equilibrate_burned_gas("UV");

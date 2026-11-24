@@ -4,8 +4,8 @@
 FrictionModel::FrictionModel(double cylinder_bore, double cylinder_stroke, double con_rod_len,
                            double c1, double c2, double c3, double c4)
     : bore(cylinder_bore), stroke(cylinder_stroke), con_rod_length(con_rod_len),
-      accumulated_friction_work(0.0), cycle_start_angle(0.0), integration_active(false),
-      cf_c1(c1), cf_c2(c2), cf_c3(c3), cf_c4(c4) {
+      cf_c1(c1), cf_c2(c2), cf_c3(c3), cf_c4(c4),
+      accumulated_friction_work(0.0), cycle_start_angle(0.0), integration_active(false) {
     // Parameters are now passed in from YAML file
 }
 
