@@ -75,6 +75,8 @@ SimulationParameters ConfigLoader::loadSimulationParameters(const std::string& f
         params.simulation.output_interval = simulation["output_interval"].as<double>();
         params.simulation.start_angle = simulation["start_angle"].as<double>();
         params.simulation.end_angle = simulation["end_angle"].as<double>();
+        params.simulation.equilibrium_expansion =
+            simulation["equilibrium_expansion"].as<bool>(true);
         
         // Load tolerances
         auto tolerances = config["tolerances"];

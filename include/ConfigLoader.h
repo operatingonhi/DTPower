@@ -74,6 +74,7 @@ struct SimulationControl {
     double output_interval;
     double start_angle;
     double end_angle;
+    bool equilibrium_expansion = true;
 };
 
 struct ToleranceParameters {

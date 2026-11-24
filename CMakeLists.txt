@@ -23,6 +23,7 @@ if(ENABLE_PROFILING)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg") 
 endif()
+
                                                                                   
 if(CROSS_COMPILING_WINDOWS)
     # Use pre-compiled Cantera for Windows cross-compilation
@@ -98,4 +99,20 @@ else()
         ${CANTERA_CFLAGS_OTHER}
         ${YAML_CPP_CFLAGS_OTHER}
     )
+endif()
+
+# Physical regression checks for the equilibrium thermodynamic updates.
+include(CTest)
+if(BUILD_TESTING AND NOT CROSS_COMPILING_WINDOWS)
+    add_executable(equilibrium_expansion_test
+        tests/equilibrium_expansion.cpp
+        src/Cylinder.cpp src/CanteraInterface.cpp src/WoschniHeatTransfer.cpp)
+    target_include_directories(equilibrium_expansion_test PRIVATE
+        ${CANTERA_INCLUDE_DIRS} ${YAML_CPP_INCLUDE_DIRS})
+    target_link_directories(equilibrium_expansion_test PRIVATE ${CANTERA_LIBRARY_DIRS})
+    target_link_libraries(equilibrium_expansion_test PRIVATE
+        ${CANTERA_LIBRARIES} ${YAML_CPP_LIBRARIES} ${PLATFORM_LIBRARIES})
+    target_compile_options(equilibrium_expansion_test PRIVATE
+        ${CANTERA_CFLAGS_OTHER} ${YAML_CPP_CFLAGS_OTHER})
+    add_test(NAME equilibrium_expansion COMMAND equilibrium_expansion_test)
 endif()

@@ -4,11 +4,22 @@
 #include "CanteraInterface.h"                                                     
 #include "WoschniHeatTransfer.h"                                                  
 #include <memory>                                                                 
-                                                                                  
+enum class CombustionModel { MULTIZONE, EQUILIBRIUM };
+
 class Cylinder {                                                                  
 private:                                                                          
     std::unique_ptr<CanteraInterface> gas;                                        
     std::unique_ptr<WoschniHeatTransfer> heat_transfer;                           
+
+    //CombustionModel combustion_model = CombustionModel::MULTIZONE;
+    CombustionModel combustion_model = CombustionModel::EQUILIBRIUM;
+    // Keep burned gas in equilibrium through expansion and exhaust by default.
+    bool   equilibrium_expansion = true;
+    double equilibrium_heat_release_J = 0.0;
+    bool   equilibrium_heat_release_pending = false;
+    void ignite_equilibrium();
+    void advance_chemistry_equilibrium(double dt);
+    void equilibrate_burned_gas(const std::string& constraints);
 
     // Add persistent incoming gas object for mixing calculations
     std::unique_ptr<CanteraInterface> mixing_gas;
@@ -68,6 +79,12 @@ public:
              const std::string& mechanism_file, double wall_temp = 450.0);        
                                                                                   
     ~Cylinder() = default;
+
+    void set_combustion_model(CombustionModel model);
+    CombustionModel get_combustion_model() const;
+    void set_equilibrium_expansion(bool enable);
+    bool get_equilibrium_expansion() const { return equilibrium_expansion; }
+    void reset_combustion_state();
     
     void enable_combustion_logging(const std::string& filename);
     void disable_combustion_logging();

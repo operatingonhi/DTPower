@@ -27,6 +27,14 @@ Engine::Engine(double cylinder_bore, double cylinder_stroke, double connecting_r
     // Initialize components with parameters from YAML files
     double T_wall = engine_params.operating_conditions.wall_temperature;
     cylinder = std::make_unique<Cylinder>(bore, stroke, clearance_volume, mechanism_file, T_wall);
+    cylinder->set_equilibrium_expansion(sim_params.simulation.equilibrium_expansion);
+    std::cout << "Combustion model: "
+              << (cylinder->get_combustion_model() == CombustionModel::EQUILIBRIUM
+                      ? "equilibrium" : "finite-rate multizone")
+              << "; continuing post-ignition equilibrium: "
+              << (cylinder->get_combustion_model() == CombustionModel::EQUILIBRIUM &&
+                  cylinder->get_equilibrium_expansion() ? "enabled" : "disabled")
+              << std::endl;
     
     // Update heat transfer model with Woschni correlation parameters
     cylinder->update_heat_transfer_parameters(sim_params.heat_transfer.woschni_c1,
@@ -221,6 +229,7 @@ void Engine::initialize_cycle() {
     valves_flowing = false;  // Reset valve flow status
     
     // Initialize cylinder state at starting angle
+    cylinder->reset_combustion_state();
     cylinder->get_gas()->set_state_TPX(intake_temperature, intake_pressure, intake_composition);
     
     // Update cylinder volume for the starting position
@@ -794,6 +803,11 @@ void Engine::output_performance_summary(const std::string& filename) {
     
     // Write header with parameter names and units
     file << "Parameter,Value,Unit\n";
+    file << "Equilibrium Combustion Model,"
+         << (cylinder->get_combustion_model() == CombustionModel::EQUILIBRIUM ? 1 : 0)
+         << ",-\n";
+    file << "Equilibrium Expansion Enabled,"
+         << (cylinder->get_equilibrium_expansion() ? 1 : 0) << ",-\n";
     
     // Engine operating conditions
     file << "Engine Speed," << engine_speed << ",rpm\n";

@@ -48,6 +48,13 @@ void Cylinder::set_volume(double new_volume) {
         
         // Use Cantera's setState_SV (entropy, specific volume) to maintain isentropic process
         gas->set_state_SV(gas->entropy(), specific_volume);
+
+        // Burned equilibrium gas follows an isentropic equilibrium path.
+        // Fresh charge and the finite-rate model keep their own chemistry rules.
+        if (combustion_model == CombustionModel::EQUILIBRIUM &&
+            equilibrium_expansion && combustion_initiated) {
+            equilibrate_burned_gas("SV");
+        }
     }
     previous_volume = volume;
     volume = new_volume;
@@ -60,6 +67,50 @@ void Cylinder::set_wall_temperature(double T_wall) {
 
 void Cylinder::set_mass(double new_mass) {
     mass = new_mass;
+}
+
+void Cylinder::set_combustion_model(CombustionModel model) {
+    combustion_model = model;
+}
+
+CombustionModel Cylinder::get_combustion_model() const {
+    return combustion_model;
+}
+
+void Cylinder::set_equilibrium_expansion(bool enable) {
+    equilibrium_expansion = enable;
+}
+
+void Cylinder::reset_combustion_state() {
+    combustion_initiated = false;
+    combustion_active = false;
+    equilibrium_heat_release_pending = false;
+    equilibrium_heat_release_J = 0.0;
+    instantaneous_heat_release_rate = 0.0;
+}
+
+void Cylinder::equilibrate_burned_gas(const std::string& constraints) {
+    auto thermo = gas->get_solution()->thermo();
+    // ChemEquil bounds its temperature search by the phase's common species
+    // range (3000 K for GRI30). Above that range it can spend all its iterations
+    // on an unreachable state before falling back to VCS. Select VCS directly
+    // there; below it, keep the fast element-potential solver with VCS fallback.
+    // This changes the numerical algorithm, not the equilibrium constraints.
+    if (gas->temperature() >= thermo->minTemp() &&
+        gas->temperature() <= thermo->maxTemp()) {
+        std::vector<double> initial_state;
+        thermo->saveState(initial_state);
+        try {
+            // A stalled element-potential iteration can also occur in cold,
+            // nearly stoichiometric products. Fall back promptly in that case,
+            // while allowing the robust VCS solver its full iteration budget.
+            thermo->equilibrate(constraints, "element_potential", 1e-9, 50);
+            return;
+        } catch (const Cantera::CanteraError&) {
+            thermo->restoreState(initial_state);
+        }
+    }
+    thermo->equilibrate(constraints, "vcs", 1e-9, 1000);
 }
 
 void Cylinder::update_heat_transfer_parameters(double c1, double c2, double c3) {
@@ -108,6 +159,12 @@ void Cylinder::disable_combustion_logging() {
 
 void Cylinder::initiate_spark_ignition(double spark_energy) {
     if (!combustion_initiated && spark_energy > 0.0) {
+        // Simple model: instantaneous constant-U,V equilibrium of the whole charge
+        if (combustion_model == CombustionModel::EQUILIBRIUM) {
+            ignite_equilibrium();
+            return;
+        }
+
         // Initialize the three-zone combustion model
         initialize_combustion_zones();
         
@@ -127,6 +184,68 @@ void Cylinder::initiate_spark_ignition(double spark_energy) {
         combustion_initiated = true;
         combustion_active = true;
     }
+}
+
+void Cylinder::ignite_equilibrium() {
+    PROFILE_SCOPE("equilibrium_combustion");
+
+    // Pre-combustion state (charge is uniform; volume and mass are fixed)
+    const double T0 = gas->temperature();
+    const double P0 = gas->pressure();
+    const double u0 = gas->internal_energy();
+    const double v0 = volume / mass;
+    const std::vector<double> Y0 = gas->mass_fractions();
+
+    try {
+        // Instantaneous combustion at constant volume and constant internal energy:
+        // all reactants -> equilibrium products, no heat transfer during the event.
+        gas->get_solution()->thermo()->equilibrate("UV");
+    } catch (const std::exception& e) {
+        std::cerr << "Warning: equilibrium combustion failed (" << e.what()
+                  << "); charge left unburned." << std::endl;
+        gas->set_mass_fractions(Y0);
+        gas->set_state_UV(u0, v0);
+        return;
+    }
+
+    const std::vector<double> Y1 = gas->mass_fractions();
+
+    // Heat release = chemical energy released, i.e. the enthalpy difference between
+    // reactants and products evaluated at the same (pre-combustion) T and P.
+    // The cylinder's own enthalpy change is not usable here: at constant U,V the
+    // pressure rise makes H increase even though heat is being released.
+    adiabatic_gas->set_state_TPY(T0, P0, Y0);
+    const double h_reactants = adiabatic_gas->enthalpy();   // [J/kg]
+    adiabatic_gas->set_state_TPY(T0, P0, Y1);
+    const double h_products = adiabatic_gas->enthalpy();    // [J/kg]
+
+    equilibrium_heat_release_J = mass * (h_reactants - h_products);  // [J]
+    equilibrium_heat_release_pending = true;
+
+    // Keep the zone bookkeeping consistent for any external code that reads it
+    mass_unburned = 0.0;
+    mass_flame    = 0.0;
+    mass_burned   = mass;
+    adiabatic_flame_temp = gas->temperature();
+
+    combustion_initiated = true;
+    combustion_active    = true;   // cleared on the next advance_chemistry() call
+}
+
+void Cylinder::advance_chemistry_equilibrium(double dt) {
+    // Ignition is an instantaneous UV equilibrium event. Continued equilibrium
+    // is applied in the volume, wall-heat, and outflow updates, conserving each
+    // operation's thermodynamic constraints without a second heat source.
+    if (equilibrium_heat_release_pending && dt > 0.0) {
+        // Report the one-shot release as an average rate over the step in which
+        // it occurred, so that integrating HRR * dt recovers the released energy.
+        instantaneous_heat_release_rate = equilibrium_heat_release_J / dt;  // [W]
+        equilibrium_heat_release_pending = false;
+        equilibrium_heat_release_J = 0.0;
+    } else {
+        instantaneous_heat_release_rate = 0.0;
+    }
+    combustion_active = false;
 }
 
 void Cylinder::initialize_combustion_zones() {
@@ -613,7 +732,11 @@ void Cylinder::heat_loss(double dt, double mean_piston_speed, double motored_pre
         
         // Use setState_UV (internal energy, specific volume) for constant volume heat transfer
         gas->set_state_UV(specific_internal_energy, specific_volume);
-            
+
+        if (combustion_model == CombustionModel::EQUILIBRIUM &&
+            equilibrium_expansion && combustion_initiated) {
+            equilibrate_burned_gas("UV");
+        }
     }
 }
 
@@ -686,17 +809,32 @@ void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
     // Update mass
     mass = new_mass;
     
-    // Reset combustion state when mass is removed (exhaust valve open)
-    combustion_initiated = false;
+    // Outflow removes burned gas; it does not make the remaining charge fresh.
+    // Preserve equilibrium chemistry through exhaust discharge. Retain the old
+    // reset behavior for the multizone model and the frozen comparison mode.
+    const bool continue_equilibrium =
+        combustion_model == CombustionModel::EQUILIBRIUM &&
+        equilibrium_expansion && combustion_initiated;
+    if (!continue_equilibrium) {
+        combustion_initiated = false;
+    }
     combustion_active = false;
     
     // Set state using enthalpy and pressure
     double current_pressure = gas->pressure();
     gas->set_state_UV(new_specific_energy, volume/mass);
+    if (continue_equilibrium) {
+        equilibrate_burned_gas("UV");
+    }
         
 }
 
 void Cylinder::advance_chemistry(double dt) {
+    if (combustion_model == CombustionModel::EQUILIBRIUM) {
+        advance_chemistry_equilibrium(dt);
+        return;
+    }
+
     // Update combustion zones if combustion is active
     if (combustion_active) {
         
