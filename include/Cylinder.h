@@ -6,6 +6,16 @@
 #include <memory>                                                                 
 enum class CombustionModel { MULTIZONE, EQUILIBRIUM };
 
+struct MassTransfer {
+    double mass = 0.0;      // kg
+    double enthalpy = 0.0;  // J carried by the transferred mass
+
+    void operator+=(const MassTransfer& transfer) {
+        mass += transfer.mass;
+        enthalpy += transfer.enthalpy;
+    }
+};
+
 class Cylinder {                                                                  
 private:                                                                          
     std::unique_ptr<CanteraInterface> gas;                                        
@@ -89,7 +99,9 @@ public:
     void enable_combustion_logging(const std::string& filename);
     void disable_combustion_logging();
                                                                                   
-    void set_volume(double new_volume);                                           
+    void initialize_charge(double new_volume, double temperature, double pressure,
+                           const std::string& composition);
+    void set_volume(double new_volume);
     void set_wall_temperature(double T_wall);
     void set_mass(double new_mass);
     void update_heat_transfer_parameters(double c1, double c2, double c3);
@@ -103,8 +115,10 @@ public:
                                                                                      
     void heat_loss(double dt, double mean_piston_speed, double motored_pressure = 0.0, bool valves_flowing = false);
                                                                                   
-    void add_mass_flow(double mass_flow_rate, double dt, const std::string& incoming_composition, double incoming_temperature);     
-    void remove_mass_flow(double mass_flow_rate, double dt);                      
+    MassTransfer add_mass_flow(double mass_flow_rate, double dt,
+                               const std::string& incoming_composition,
+                               double incoming_temperature, double incoming_pressure = 0.0);
+    MassTransfer remove_mass_flow(double mass_flow_rate, double dt);
                                                                                   
     void advance_chemistry(double dt);                                            
                                                                                   

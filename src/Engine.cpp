@@ -1,11 +1,19 @@
 #include "Engine.h"
 #include "Profiler.h"
 #include "DebugLogger.h"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <chrono>
+#include <iomanip>
 #include <stdexcept>
 
+namespace {
+double cycle_phase(double angle) {
+    const double phase = std::fmod(angle, 720.0);
+    return phase < 0.0 ? phase + 720.0 : phase;
+}
+}
 
 Engine::Engine(double cylinder_bore, double cylinder_stroke, double connecting_rod_length,
                double compression_ratio, const std::string& mechanism_file,
@@ -16,8 +24,8 @@ Engine::Engine(double cylinder_bore, double cylinder_stroke, double connecting_r
       intake_pressure(101325.0), intake_temperature(300.0), exhaust_pressure(101325.0),
       intake_composition("O2:0.21, N2:0.79"), mechanism_file(mechanism_file),
       fuel_energy_rate(0.0), lower_heating_value(0.0),
-      total_lhv_energy(0.0), indicated_work(0.0), pumping_work(0.0), 
-      friction_work(0.0), heat_transfer_loss(0.0), exhaust_energy_loss(0.0),
+      total_lhv_energy(0.0), pumping_work(0.0),
+      friction_work(0.0), exhaust_energy_loss(0.0),
       reference_enthalpy(0.0), T3(0.0), sim_params(sim_params), engine_params(engine_params) {
     
     // Calculate clearance volume from compression ratio
@@ -70,6 +78,9 @@ Engine::Engine(double cylinder_bore, double cylinder_stroke, double connecting_r
 }
 
 void Engine::set_engine_speed(double rpm) {
+    if (!std::isfinite(rpm) || rpm <= 0.0) {
+        throw std::invalid_argument("Engine speed must be finite and positive");
+    }
     engine_speed = rpm;
     calculate_time_step();
 }
@@ -108,9 +119,22 @@ void Engine::calculate_time_step() {
     time_step = crank_angle_step * M_PI / 180.0 / omega;  // [s]
 }
 
-void Engine::update_cylinder_volume() {
-    double volume = crankshaft->calculate_cylinder_volume(crank_angle, clearance_volume);
-    cylinder->set_volume(volume);
+void Engine::advance_piston(double next_angle) {
+    const double previous_volume = cylinder->get_volume();
+    const double previous_pressure = cylinder->get_pressure();
+    const double previous_energy = cylinder->get_internal_energy();
+    const double next_volume = crankshaft->calculate_cylinder_volume(next_angle, clearance_volume);
+    cylinder->set_volume(next_volume);
+
+    // The piston update follows a closed, adiabatic path. Its work is -m du.
+    const double work = cylinder->get_mass() * (previous_energy - cylinder->get_internal_energy());
+    balance.piston_work += work;
+    balance.pressure_volume_work += 0.5 * (previous_pressure + cylinder->get_pressure()) *
+                                    (next_volume - previous_volume);
+    const double phase = cycle_phase(crank_angle);
+    if (phase < 180.0 || phase >= 540.0) {
+        pumping_work += work;
+    }
 }
 
 void Engine::calculate_valve_flows() {
@@ -132,12 +156,12 @@ void Engine::calculate_valve_flows() {
         
         if (mass_flow > 0.0) {
             // Flow into cylinder
-            intake_gas->set_state_TPX(intake_temperature, intake_pressure, intake_composition);
-            cylinder->add_mass_flow(mass_flow, time_step, intake_composition, intake_temperature);
+            balance.inflow += cylinder->add_mass_flow(mass_flow, time_step, intake_composition,
+                                                      intake_temperature, intake_pressure);
             mass_flowing = true;
         } else if (mass_flow < 0.0) {
             // Backflow out of cylinder
-            cylinder->remove_mass_flow(-mass_flow, time_step);
+            balance.outflow += cylinder->remove_mass_flow(-mass_flow, time_step);
             mass_flowing = true;
         }
     }
@@ -149,17 +173,10 @@ void Engine::calculate_valve_flows() {
             cylinder->get_temperature(), cylinder->get_density());
         
         if (mass_flow > 0.0) {
-            // Calculate exhaust energy loss before removing mass
-            double exhaust_enthalpy = cylinder->get_enthalpy();  // [J/kg]
-            double enthalpy_difference = exhaust_enthalpy - reference_enthalpy;  // [J/kg]
-            double energy_loss_rate = mass_flow * enthalpy_difference;  // [W]
-            
-            // Accumulate exhaust energy loss (only positive losses)
-            if (enthalpy_difference > 0.0) {
-                exhaust_energy_loss += energy_loss_rate * time_step;  // [J]
-            }
-            
-            cylinder->remove_mass_flow(mass_flow, time_step);
+            const auto exhaust = cylinder->remove_mass_flow(mass_flow, time_step);
+            balance.outflow += exhaust;
+            // Performance metric relative to equilibrium products at intake conditions.
+            exhaust_energy_loss += std::max(0.0, exhaust.enthalpy - exhaust.mass * reference_enthalpy);
             mass_flowing = true;
         }
     }
@@ -223,26 +240,19 @@ void Engine::initialize_cycle() {
     results = EngineResults();  // Clear previous results
     
     // Reset energy tracking variables
+    balance = {};
+    pumping_work = 0.0;
     exhaust_energy_loss = 0.0;
-    heat_transfer_loss = 0.0;
+    fuel_energy_rate = 0.0;
+    reference_enthalpy = 0.0;
     T3 = 0.0;  // Reset T3 for new cycle
     valves_flowing = false;  // Reset valve flow status
     
     // Initialize cylinder state at starting angle
-    cylinder->reset_combustion_state();
-    cylinder->get_gas()->set_state_TPX(intake_temperature, intake_pressure, intake_composition);
-    
-    // Update cylinder volume for the starting position
-    update_cylinder_volume();
-    
-    // Update cylinder mass based on the initialized state
-    double initial_density = cylinder->get_gas()->density();
-    double initial_volume = cylinder->get_volume();
-    cylinder->set_mass(initial_density * initial_volume);
-    
-    // Initialize previous state for combustion zone tracking
-    // This is done in update_thermodynamics, but we need initial values
-    // The first call to update_thermodynamics will set these properly
+    const double initial_volume = crankshaft->calculate_cylinder_volume(crank_angle, clearance_volume);
+    cylinder->initialize_charge(initial_volume, intake_temperature, intake_pressure, intake_composition);
+    balance.initial_mass = cylinder->get_mass();
+    balance.initial_internal_energy = balance.initial_mass * cylinder->get_internal_energy();
     
     // Get species names for CSV header (only need to do this once)
     if (results.species_names.empty()) {
@@ -282,6 +292,7 @@ void Engine::initialize_cycle() {
 
 void Engine::run_cycle() {
     PROFILE_FUNCTION();
+    cylinder->get_heat_transfer()->clear_reference_values();
     
     // Run motored cycle first to get motored pressure profile
     std::vector<double> motored_pressures;
@@ -312,7 +323,6 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
     // Track if we've set reference values at IVC
     bool reference_values_set = false;
     const double IVC_angle = 180.0;  // Intake valve closure occurs at ~180° ATDC
-    const double IVC_tolerance = 1.0;  // Capture within 1 degree of IVC
     
     // Progress tracking variables
     double start_angle = sim_params.simulation.start_angle;
@@ -326,6 +336,12 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
     std::cout << "Progress: [";
     for (int i = 0; i < progress_bar_width; ++i) std::cout << " ";
     std::cout << "] 0%" << std::flush;
+
+    store_results();
+    if (is_motored) {
+        motored_pressures.push_back(cylinder->get_pressure());
+        motored_angles.push_back(start_angle);
+    }
     
     // For fired cycle, we need motored pressure data for heat transfer calculations
     // For motored cycle, we're building the pressure profile
@@ -359,15 +375,14 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
             
             // Show current crank angle and phase
             std::string phase;
-            double angle_mod = std::fmod(crank_angle, 720.0);
-            if (angle_mod < 0) angle_mod += 720.0;
+            double angle_mod = cycle_phase(crank_angle);
             
             if (angle_mod < 180) phase = "Intake";
             else if (angle_mod < 360) phase = "Compression";
             else if (angle_mod < 540) phase = "Expansion";
             else phase = "Exhaust";
             
-            std::cout << " (" << static_cast<int>(crank_angle) << "_ - " << phase << ")" << std::flush;
+            std::cout << " (" << crank_angle << "° - " << phase << ")" << std::flush;
         }
         
         // Check if we're in a reactive phase requiring smaller time steps
@@ -394,18 +409,21 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
             }
         }
         
-        // Ensure we don't overshoot target angle
-        adaptive_angle_step = std::min(adaptive_angle_step, target_crank_angle - crank_angle);
-        
-        // Calculate corresponding time step
-        double omega = engine_speed * 2.0 * M_PI / 60.0;  // [rad/s]
-        double adaptive_time_step = adaptive_angle_step * M_PI / 180.0 / omega;  // [s]
-        time_step = adaptive_time_step;
-        
-        // Update cylinder volume due to piston motion
-        {
-            PROFILE_SCOPE("update_cylinder_volume");
-            update_cylinder_volume();
+        // End steps at the pumping-stroke boundaries and the first spark angle.
+        const double phase = cycle_phase(crank_angle);
+        const double work_boundary = phase < 180.0 ? 180.0 : phase < 540.0 ? 540.0 : 900.0;
+        double next_angle = std::min({crank_angle + adaptive_angle_step, target_crank_angle,
+                                      crank_angle + (work_boundary - phase)});
+        const double spark_start = spark->get_start_angle();
+        if (!is_motored && crank_angle < spark_start && spark->is_spark_active(spark_start)) {
+            next_angle = std::min(next_angle, spark_start);
+        }
+        if (next_angle <= crank_angle) {
+            throw std::runtime_error("Crank angle step is too small to advance the simulation");
+        }
+        time_step = (next_angle - crank_angle) / (6.0 * engine_speed); // seconds
+        if (!std::isfinite(time_step) || time_step <= 0.0) {
+            throw std::runtime_error("Crank angle step and engine speed produce an invalid time step");
         }
         
         // Calculate and apply mass flows before thermodynamics
@@ -422,7 +440,7 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
             double cycles_per_second = engine_speed / (60.0 * strokes_per_cycle);
             double mass_flow_rate = cylinder->get_mass() * cycles_per_second;
             fuel_energy_rate = mass_flow_rate * lower_heating_value;  // [W]
-            cylinder->initiate_spark_ignition(spark_power * adaptive_time_step);
+            cylinder->initiate_spark_ignition(spark_power * time_step);
         }
         
         // Capture peak temperature during combustion (only for fired cycle)
@@ -435,12 +453,13 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
             PROFILE_SCOPE("update_thermodynamics");
             // Only advance chemistry for fired cycle
             if (!is_motored && reactive_temperature_threshold < cylinder->get_temperature()){
-                cylinder->advance_chemistry(adaptive_time_step);
+                cylinder->advance_chemistry(time_step);
             }
             double mean_piston_speed = crankshaft->calculate_mean_piston_speed(engine_speed);
             // For motored run, use 0.0 for motored_pressure (no combustion term)
             // For fired run, use interpolated motored_pressure
-            cylinder->heat_loss(adaptive_time_step, mean_piston_speed, motored_pressure, valves_flowing);
+            cylinder->heat_loss(time_step, mean_piston_speed, motored_pressure, valves_flowing);
+            balance.wall_heat += cylinder->get_heat_transfer_rate() * time_step;
         }
         
         // Calculate and accumulate friction work (only for fired cycle)
@@ -449,22 +468,15 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
             double piston_velocity = crankshaft->calculate_piston_velocity(crank_angle, engine_speed);
             double friction_power = friction->calculate_instantaneous_friction_power(
                 engine_speed, cylinder->get_pressure(), crank_angle, piston_velocity);
-            friction->accumulate_friction_work(friction_power, adaptive_time_step);
+            friction->accumulate_friction_work(friction_power, time_step);
         }
-        
-        // Track energy flows for ledger (only for fired cycle)
-        if (!is_motored) {
-            PROFILE_SCOPE("energy_tracking");
-            double heat_loss = cylinder->get_heat_transfer_rate() * adaptive_time_step;
-            heat_transfer_loss += std::abs(heat_loss);  // Always positive for losses
-        }
-        
-        crank_angle += adaptive_angle_step;
+
+        advance_piston(next_angle);
+        crank_angle = next_angle;
         
         // Capture reference values at IVC during motored run
-        if (is_motored && !reference_values_set && 
-            crank_angle >= (IVC_angle - IVC_tolerance) && 
-            crank_angle <= (IVC_angle + IVC_tolerance)) {
+        if (is_motored && !reference_values_set && start_angle <= IVC_angle &&
+            crank_angle == IVC_angle) {
             
             // Get state at IVC
             double T_ivc = cylinder->get_temperature();  // [K]
@@ -481,17 +493,13 @@ void Engine::run_cycle_internal(bool is_motored, std::vector<double>& motored_pr
             std::cout << "  V_ivc = " << V_ivc * 1.0e6 << " cm³" << std::endl;
         }
         
-        // Store results at specified intervals (starting from 0°)
-        if (crank_angle >= 0.0 && 
-            (results.crank_angles.empty() || 
-             crank_angle - results.crank_angles.back() >= sim_params.simulation.output_interval)) {
-            
-            if (is_motored) {
-                // Store motored pressure profile for use in fired cycle
-                motored_pressures.push_back(cylinder->get_pressure());
-                motored_angles.push_back(crank_angle);
-            }
-            
+        if (is_motored) {
+            motored_pressures.push_back(cylinder->get_pressure());
+            motored_angles.push_back(crank_angle);
+        }
+        // Sampling the CSV must not influence the solver or the work integral.
+        if (crank_angle == target_crank_angle ||
+            crank_angle - results.crank_angles.back() >= sim_params.simulation.output_interval) {
             store_results();
         }
     }
@@ -528,33 +536,12 @@ double Engine::interpolate_motored_pressure(double angle, const std::vector<doub
         return 0.0;  // No motored data available
     }
     
-    // Handle angles outside the motored data range by using modulo arithmetic
-    // This allows the simulation to run beyond 720 degrees
-    double normalized_angle = angle;
-    
-    // Normalize angle to be within the motored data range
-    while (normalized_angle > angles.back()) {
-        normalized_angle -= 720.0;  // Subtract one complete cycle
-    }
-    while (normalized_angle < angles.front()) {
-        normalized_angle += 720.0;  // Add one complete cycle
-    }
-    
-    // Find the two nearest points for interpolation
-    for (size_t i = 0; i < angles.size() - 1; ++i) {
-        if (normalized_angle >= angles[i] && normalized_angle <= angles[i + 1]) {
-            // Linear interpolation
-            double t = (normalized_angle - angles[i]) / (angles[i + 1] - angles[i]);
-            return pressures[i] + t * (pressures[i + 1] - pressures[i]);
-        }
-    }
-    
-    // If we get here, return the closest value
-    if (normalized_angle < angles.front()) {
-        return pressures.front();
-    } else {
-        return pressures.back();
-    }
+    const auto upper = std::lower_bound(angles.begin(), angles.end(), angle);
+    if (upper == angles.begin()) return pressures.front();
+    if (upper == angles.end()) return pressures.back();
+    const auto i = upper - angles.begin();
+    const double fraction = (angle - angles[i - 1]) / (angles[i] - angles[i - 1]);
+    return pressures[i - 1] + fraction * (pressures[i] - pressures[i - 1]);
 }
 
 void Engine::run_multiple_cycles(int num_cycles) {
@@ -586,7 +573,8 @@ void Engine::output_results(const std::string& filename) {
     }
     
     // Write header
-    file << "CrankAngle[deg],Pressure[Pa],Temperature[K],Volume[m3],Mass[kg],HeatReleaseRate[W],HeatTransferRate[W],h_conv[W/(m2K)],SurfaceArea[m2],T_gas[K],FrictionPower[W],Gamma[-],PumpingWork[Pa],ExhaustEnergyLoss[J]";
+    file << std::setprecision(12)
+         << "CrankAngle[deg],Pressure[Pa],Temperature[K],Volume[m3],Mass[kg],HeatReleaseRate[W],HeatTransferRate[W],h_conv[W/(m2K)],SurfaceArea[m2],T_gas[K],FrictionPower[W],Gamma[-],PumpingWork[Pa],ExhaustEnergyLoss[J]";
     
     // Add species mass fraction columns
     for (const auto& species : results.species_names) {
@@ -642,15 +630,8 @@ void Engine::output_results(const std::string& filename) {
 }
 
 double Engine::get_indicated_mean_effective_pressure() const {
-    // Calculate IMEP from pressure-volume data (entire cycle)
-    double indicated_work = 0.0;
-    for (size_t i = 1; i < results.cylinder_pressures.size(); ++i) {
-        double dV = results.cylinder_volumes[i] - results.cylinder_volumes[i - 1];
-        indicated_work += results.cylinder_pressures[i] * dV;
-    }
-    
-    double displacement = M_PI * bore * bore / 4.0 * stroke;
-    return indicated_work / displacement;
+    const double displacement = M_PI * bore * bore / 4.0 * stroke;
+    return balance.piston_work / displacement;
 }
 
 double Engine::get_brake_mean_effective_pressure() const {
@@ -661,39 +642,17 @@ double Engine::get_brake_mean_effective_pressure() const {
 }
 
 double Engine::get_gross_mean_effective_pressure() const {
-    // Calculate GMEP from compression and expansion strokes only (180-540°)
-    double gross_work = 0.0;
-    for (size_t i = 1; i < results.cylinder_pressures.size(); ++i) {
-        double angle = results.crank_angles[i];
-        if (angle >= 180.0 && angle <= 540.0) {
-            double dV = results.cylinder_volumes[i] - results.cylinder_volumes[i - 1];
-            gross_work += results.cylinder_pressures[i] * dV;
-        }
-    }
-    
-    double displacement = M_PI * bore * bore / 4.0 * stroke;
-    return gross_work / displacement;
+    const double displacement = M_PI * bore * bore / 4.0 * stroke;
+    return (balance.piston_work - pumping_work) / displacement;
 }
 
 double Engine::get_pumping_mean_effective_pressure() const {
-    // Calculate PMEP from intake and exhaust strokes (0-180° and 540-720°)
-    double pumping_work_total = 0.0;
-    for (size_t i = 1; i < results.cylinder_pressures.size(); ++i) {
-        double angle = results.crank_angles[i];
-        if ((angle >= 0.0 && angle <= 180.0) || (angle >= 540.0 && angle <= 720.0)) {
-            double dV = results.cylinder_volumes[i] - results.cylinder_volumes[i - 1];
-            pumping_work_total += results.cylinder_pressures[i] * dV;
-        }
-    }
-    
-    double displacement = M_PI * bore * bore / 4.0 * stroke;
-    return pumping_work_total / displacement;
+    const double displacement = M_PI * bore * bore / 4.0 * stroke;
+    return pumping_work / displacement;
 }
 
 double Engine::get_pumping_work() const {
-    double pmep = get_pumping_mean_effective_pressure();
-    double displacement = M_PI * bore * bore / 4.0 * stroke;
-    return std::abs(pmep * displacement);  // [J] - absolute value for energy ledger
+    return std::abs(pumping_work);
 }
 
 double Engine::get_indicated_power() const {
@@ -736,71 +695,23 @@ void Engine::calculate_energy_ledger() {
     double cycle_time = 1.0 / cycles_per_second;
     
     total_lhv_energy = fuel_energy_rate * cycle_time;  // [J] per cycle
-    indicated_work = get_indicated_mean_effective_pressure() * displacement;  // [J]
-    pumping_work = get_pumping_work();  // [J]
     friction_work = friction->get_integrated_fmep(displacement) * displacement;  // [J]
-    
-    // exhaust_energy_loss is accumulated during the cycle
+    balance.mass_change = cylinder->get_mass() - balance.initial_mass;
+    balance.internal_energy_change =
+        cylinder->get_mass() * cylinder->get_internal_energy() - balance.initial_internal_energy;
 }
 
 void Engine::print_energy_ledger() const {
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "                    ENERGY LEDGER" << std::endl;
-    std::cout << std::string(60, '=') << std::endl;
-    
-    // Convert to kJ for better readability
-    double total_kJ = total_lhv_energy / 1000.0;
-    double indicated_kJ = indicated_work / 1000.0;
-    double pumping_kJ = pumping_work / 1000.0;
-    double friction_kJ = friction_work / 1000.0;
-    double heat_transfer_kJ = heat_transfer_loss / 1000.0;
-    double exhaust_kJ = exhaust_energy_loss / 1000.0;
-    
-    std::cout << std::fixed << std::setprecision(2);
-    std::cout << std::string(60, '-') << std::endl;
-    std::cout << "Energy Available (LHV):           " << std::setw(8) << total_kJ 
-              << " kJ  (100.0%)" << std::endl;
-    std::cout << std::string(60, '-') << std::endl;
-    
-    if (total_lhv_energy > 0) {
-        double indicated_pct = (indicated_work / total_lhv_energy) * 100.0;
-        double pumping_pct = (pumping_work / total_lhv_energy) * 100.0;
-        double friction_pct = (friction_work / total_lhv_energy) * 100.0;
-        double heat_transfer_pct = (heat_transfer_loss / total_lhv_energy) * 100.0;
-        double exhaust_pct = (exhaust_energy_loss / total_lhv_energy) * 100.0;
-        
-        std::cout << "Indicated Work (Useful):          " << std::setw(8) << indicated_kJ 
-                  << " kJ  (" << std::setw(5) << indicated_pct << "%)" << std::endl;
-        std::cout << "Friction Losses:                  " << std::setw(8) << friction_kJ 
-                  << " kJ  (" << std::setw(5) << friction_pct << "%)" << std::endl;
-        std::cout << "Pumping Losses:                   " << std::setw(8) << pumping_kJ 
-                  << " kJ  (" << std::setw(5) << pumping_pct << "%)" << std::endl;
-        std::cout << "Heat Transfer Losses:             " << std::setw(8) << heat_transfer_kJ 
-                  << " kJ  (" << std::setw(5) << heat_transfer_pct << "%)" << std::endl;
-        std::cout << "Exhaust Energy Losses:            " << std::setw(8) << exhaust_kJ 
-                  << " kJ  (" << std::setw(5) << exhaust_pct << "%)" << std::endl;
-        
-        std::cout << std::string(60, '-') << std::endl;
-        
-        // Indicated work already includes friction and pumping work
-        double total_accounted = indicated_kJ + heat_transfer_kJ + exhaust_kJ;
-        double balance_error = total_kJ - total_accounted;
-        
-        std::cout << "Total Accounted:                  " << std::setw(8) << total_accounted 
-                  << " kJ" << std::endl;
-        std::cout << "Energy Balance Error:             " << std::setw(8) << balance_error 
-                  << " kJ" << std::endl;
-        
-        std::cout << std::string(60, '=') << std::endl;
-        std::cout << "Net Brake Work:                   " << std::setw(8) 
-                  << (indicated_kJ - friction_kJ) << " kJ" << std::endl;
-        std::cout << "Brake Efficiency:                 " << std::setw(7) 
-                  << get_cycle_efficiency() * 100.0 << " %" << std::endl;
-        std::cout << "Indicated Efficiency:             " << std::setw(7) 
-                  << indicated_pct << " %" << std::endl;
-    }
-    
-    std::cout << std::string(60, '=') << std::endl;
+    std::cout << "\nCylinder energy balance [J] (heat and enthalpy in, work out)\n"
+              << "Wall heat into gas: " << balance.wall_heat << '\n'
+              << "Intake enthalpy: " << balance.inflow.enthalpy << '\n'
+              << "Outlet enthalpy: " << balance.outflow.enthalpy << '\n'
+              << "Piston work: " << balance.piston_work << '\n'
+              << "Change in stored internal energy: " << balance.internal_energy_change << '\n'
+              << "Energy balance error: " << balance.energy_residual(balance.piston_work) << '\n'
+              << "Pressure-volume quadrature balance error: "
+              << balance.energy_residual(balance.pressure_volume_work) << '\n'
+              << "Fuel energy estimate (LHV): " << total_lhv_energy << "\n";
 }
 
 void Engine::output_performance_summary(const std::string& filename) {
@@ -810,7 +721,7 @@ void Engine::output_performance_summary(const std::string& filename) {
     }
     
     // Write header with parameter names and units
-    file << "Parameter,Value,Unit\n";
+    file << std::setprecision(12) << "Parameter,Value,Unit\n";
     file << "Equilibrium Combustion Model,"
          << (cylinder->get_combustion_model() == CombustionModel::EQUILIBRIUM ? 1 : 0)
          << ",-\n";
@@ -837,23 +748,36 @@ void Engine::output_performance_summary(const std::string& filename) {
     
     // Efficiencies
     file << "Cycle Efficiency," << get_cycle_efficiency() * 100.0 << ",%\n";
-    file << "Indicated Efficiency," << (indicated_work / total_lhv_energy) * 100.0 << ",%\n";
+    const double indicated_efficiency =
+        total_lhv_energy > 0.0 ? balance.piston_work / total_lhv_energy : 0.0;
+    file << "Indicated Efficiency," << indicated_efficiency * 100.0 << ",%\n";
     
-    // Energy ledger (convert to kJ for consistency with printed output)
+    // Performance energies in kJ.
     file << "Total LHV Energy Available," << total_lhv_energy / 1000.0 << ",kJ\n";
-    file << "Indicated Work," << indicated_work / 1000.0 << ",kJ\n";
+    file << "Indicated Work," << balance.piston_work / 1000.0 << ",kJ\n";
     file << "Friction Work," << friction_work / 1000.0 << ",kJ\n";
-    file << "Pumping Work," << pumping_work / 1000.0 << ",kJ\n";
-    file << "Heat Transfer Losses," << heat_transfer_loss / 1000.0 << ",kJ\n";
+    file << "Pumping Work," << get_pumping_work() / 1000.0 << ",kJ\n";
+    file << "Heat Transfer Losses," << -balance.wall_heat / 1000.0 << ",kJ\n";
     file << "Exhaust Energy Losses," << exhaust_energy_loss / 1000.0 << ",kJ\n";
-    file << "Net Brake Work," << (indicated_work - friction_work) / 1000.0 << ",kJ\n";
+    file << "Net Brake Work," << (balance.piston_work - friction_work) / 1000.0 << ",kJ\n";
     
-    // Energy balance
-    double total_accounted = indicated_work + heat_transfer_loss + exhaust_energy_loss;
-    double balance_error = total_lhv_energy - total_accounted;
+    // Open-system balance using Cantera's enthalpies and internal energies.
+    const double total_accounted = balance.piston_work + balance.outflow.enthalpy +
+                                   balance.internal_energy_change - balance.wall_heat;
     file << "Total Energy Accounted," << total_accounted / 1000.0 << ",kJ\n";
-    file << "Energy Balance Error," << balance_error / 1000.0 << ",kJ\n";
-    
+    file << "Energy Balance Error," << balance.energy_residual(balance.piston_work) / 1000.0 << ",kJ\n";
+    file << "Wall Heat Into Gas," << balance.wall_heat / 1000.0 << ",kJ\n";
+    file << "Intake Enthalpy," << balance.inflow.enthalpy / 1000.0 << ",kJ\n";
+    file << "Outlet Enthalpy," << balance.outflow.enthalpy / 1000.0 << ",kJ\n";
+    file << "Cylinder Internal Energy Change," << balance.internal_energy_change / 1000.0 << ",kJ\n";
+    file << "Pressure-Volume Work," << balance.pressure_volume_work / 1000.0 << ",kJ\n";
+    file << "Pressure-Volume Balance Error," << balance.energy_residual(balance.pressure_volume_work) / 1000.0
+         << ",kJ\n";
+    file << "Intake Mass," << balance.inflow.mass << ",kg\n";
+    file << "Outlet Mass," << balance.outflow.mass << ",kg\n";
+    file << "Cylinder Mass Change," << balance.mass_change << ",kg\n";
+    file << "Mass Balance Error," << balance.inflow.mass - balance.outflow.mass - balance.mass_change << ",kg\n";
+
     // Fuel properties
     file << "Lower Heating Value," << lower_heating_value / 1e6 << ",MJ/kg\n";
     file << "Fuel Energy Rate," << fuel_energy_rate / 1e3 << ",kW\n";

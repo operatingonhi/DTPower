@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+#include <stdexcept>
 
 Cylinder::Cylinder(double cylinder_bore, double cylinder_stroke, double clearance_vol,
                    const std::string& mechanism_file, double wall_temp)
@@ -35,21 +36,26 @@ Cylinder::Cylinder(double cylinder_bore, double cylinder_stroke, double clearanc
     mass = 0.0;
 }
 
+void Cylinder::initialize_charge(double new_volume, double temperature, double pressure,
+                                 const std::string& composition) {
+    if (!std::isfinite(new_volume) || new_volume <= 0.0) {
+        throw std::invalid_argument("Initial cylinder volume must be finite and positive");
+    }
+    gas->set_state_TPX(temperature, pressure, composition);
+    volume = previous_volume = new_volume;
+    mass = gas->density() * volume;
+    current_heat_transfer_rate = 0.0;
+    reset_combustion_state();
+}
+
 void Cylinder::set_volume(double new_volume) {
-    
-    // Apply isentropic compression/expansion due to volume change
-    double volume_ratio = new_volume / volume;
-    
-    if (std::abs(volume_ratio - 1.0) > 0.0) {
+    if (!std::isfinite(new_volume) || new_volume <= 0.0) {
+        throw std::invalid_argument("Cylinder volume must be finite and positive");
+    }
+    if (new_volume != volume) {
         PROFILE_SCOPE("isentropic_process");
-        
-        // Apply isentropic compression/expansion from the post-chemistry state
-        // The entropy after chemistry already includes chemical reaction effects
-        double new_density = mass / new_volume;
-        double specific_volume = 1.0 / new_density;
-        
-        // Use Cantera's setState_SV (entropy, specific volume) to maintain isentropic process
-        gas->set_state_SV(gas->entropy(), specific_volume);
+
+        gas->set_state_SV(gas->entropy(), new_volume / mass);
 
         // Burned equilibrium gas follows an isentropic equilibrium path.
         // Fresh charge and the finite-rate model keep their own chemistry rules.
@@ -192,13 +198,11 @@ void Cylinder::ignite_equilibrium() {
     try {
         // Instantaneous combustion at constant volume and constant internal energy:
         // all reactants -> equilibrium products, no heat transfer during the event.
-        gas->get_solution()->thermo()->equilibrate("UV");
+        equilibrate_burned_gas("UV");
     } catch (const std::exception& e) {
-        std::cerr << "Warning: equilibrium combustion failed (" << e.what()
-                  << "); charge left unburned." << std::endl;
         gas->set_mass_fractions(Y0);
         gas->set_state_UV(u0, v0);
-        return;
+        throw std::runtime_error("Equilibrium ignition failed: " + std::string(e.what()));
     }
 
     const std::vector<double> Y1 = gas->mass_fractions();
@@ -732,13 +736,16 @@ void Cylinder::heat_loss(double dt, double mean_piston_speed, double motored_pre
     }
 }
 
-void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string& incoming_composition, double incoming_temperature) {
+MassTransfer Cylinder::add_mass_flow(double mass_flow_rate, double dt,
+                                     const std::string& incoming_composition,
+                                     double incoming_temperature, double incoming_pressure) {
     double dm = mass_flow_rate * dt;
-    if (dm <= 0.0) return;
+    if (!std::isfinite(dm)) throw std::runtime_error("Nonfinite cylinder inflow");
+    if (dm <= 0.0) return {};
     
-    // Use persistent mixing gas object instead of creating new one
-    double current_pressure = gas->pressure();
-    mixing_gas->set_state_TPX(incoming_temperature, current_pressure, incoming_composition);
+    mixing_gas->set_state_TPX(incoming_temperature,
+                              incoming_pressure > 0.0 ? incoming_pressure : gas->pressure(),
+                              incoming_composition);
     
     // Cache values before mixing
     double current_mass = mass;
@@ -774,50 +781,44 @@ void Cylinder::add_mass_flow(double mass_flow_rate, double dt, const std::string
     // Reset combustion state when new mass is added
     combustion_initiated = false;
     combustion_active = false;
+    return {dm, dm * incoming_enthalpy};
 }
 
-void Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
-    double dm = mass_flow_rate * dt;
-    if (dm <= 0.0) return;
-    
-    // Store current state
-    double current_mass = mass;
-    double current_internal_energy = gas->internal_energy();  // Specific enthalpy [J/kg]
-    double current_enthalpy = gas->enthalpy();  // Specific enthalpy [J/kg]
-    auto current_Y = gas->mass_fractions();
-    
-    // Calculate new mass (prevent excessive mass removal)
-    const double min_mass_fraction = 0.1;
-    double new_mass = std::max(current_mass * min_mass_fraction, current_mass - dm);
-    
-    // Calculate enthalpy balance
-    double total_internal_energy_before = current_mass * current_internal_energy;  // [J]
-    double energy_removed = dm * current_enthalpy;  // [J]
-    double total_energy_after = total_internal_energy_before - energy_removed;  // [J]
-    
-    // Calculate new specific energy of remaining gas
-    double new_specific_energy = total_energy_after / new_mass;  // [J/kg]
-    
-    // Update mass
-    mass = new_mass;
-    
-    // Outflow removes burned gas; it does not make the remaining charge fresh.
-    // Preserve equilibrium chemistry through exhaust discharge. Retain the old
-    // reset behavior for the multizone model and the frozen comparison mode.
+MassTransfer Cylinder::remove_mass_flow(double mass_flow_rate, double dt) {
+    const double requested_mass = mass_flow_rate * dt;
+    if (!std::isfinite(requested_mass)) throw std::runtime_error("Nonfinite cylinder outflow");
+    const double target_mass = std::max(0.1 * mass, mass - requested_mass);
+    if (target_mass >= mass) return {};
+
     const bool continue_equilibrium =
         combustion_model == CombustionModel::EQUILIBRIUM &&
         equilibrium_expansion && combustion_initiated;
+
+    MassTransfer outflow;
+    // Limit each explicit enthalpy update to 10% of the remaining charge.
+    // Large requests still retain at least 10% of the original mass.
+    while (mass > target_mass) {
+        const double new_mass = std::max(target_mass, 0.9 * mass);
+        const double dm = mass - new_mass;
+        if (dm == 0.0 || new_mass == 0.0) {
+            throw std::runtime_error("Cylinder mass is too small to update outflow");
+        }
+        const double energy_removed = dm * gas->enthalpy();
+        const double energy_remaining = mass * gas->internal_energy() - energy_removed;
+        gas->set_state_UV(energy_remaining / new_mass, volume / new_mass);
+        if (continue_equilibrium) {
+            equilibrate_burned_gas("UV");
+        }
+        mass = new_mass;
+        outflow.mass += dm;
+        outflow.enthalpy += energy_removed;
+    }
+
     if (!continue_equilibrium) {
         combustion_initiated = false;
     }
     combustion_active = false;
-    
-    // Update the state using the new specific internal energy and volume.
-    gas->set_state_UV(new_specific_energy, volume/mass);
-    if (continue_equilibrium) {
-        equilibrate_burned_gas("UV");
-    }
-        
+    return outflow;
 }
 
 void Cylinder::advance_chemistry(double dt) {

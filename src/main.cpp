@@ -1,7 +1,26 @@
 #include "Engine.h"
 #include "ConfigLoader.h"
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <vector>
+
+namespace {
+std::vector<double> valve_lifts(const std::vector<double>& angles, const ValveParameters& valve) {
+    std::vector<double> lifts(angles.size(), 0.0);
+    if (valve.max_lift == 0.0) return lifts;
+
+    const double duration = valve.close_angle - valve.open_angle;
+    for (std::size_t i = 0; i < angles.size(); ++i) {
+        double elapsed = std::fmod(angles[i] - valve.open_angle, 720.0);
+        if (elapsed < 0.0) elapsed += 720.0;
+        if (elapsed < duration) {
+            lifts[i] = valve.max_lift * (std::min(elapsed, duration - elapsed) / (0.5 * duration));
+        }
+    }
+    return lifts;
+}
+}
 
 int main() {
     try {
@@ -34,90 +53,13 @@ int main() {
         engine.set_spark_energy(engine_params.spark.energy);
         engine.enable_spark(engine_params.spark.enabled);
         
-        // Define valve profiles using loaded parameters
-        std::vector<double> intake_angles, intake_lifts;
-        std::vector<double> exhaust_angles, exhaust_lifts;
-        
-        // Intake valve profile
-        for (double angle = 0; angle <= 720; angle += 1.0) {
-            intake_angles.push_back(angle);
-            double intake_start = engine_params.valves.intake.open_angle;
-            double intake_end = engine_params.valves.intake.close_angle;
-            double max_lift = engine_params.valves.intake.max_lift;
-            
-            // Make valve timing periodic by checking multiple cycles
-            bool valve_open = false;
-            double lift_angle = 0.0;
-            double duration = intake_end - intake_start;
-            
-            // Check current cycle (0-720°)
-            if (angle >= intake_start && angle <= intake_end) {
-                valve_open = true;
-                lift_angle = angle - intake_start;
-            }
-            // Check previous cycle (-720 to 0°)
-            else if (angle >= (intake_start - 720) && angle <= (intake_end - 720)) {
-                valve_open = true;
-                lift_angle = angle - (intake_start - 720);
-            }
-            // Check next cycle (720-1440°)
-            else if (angle >= (intake_start + 720) && angle <= (intake_end + 720)) {
-                valve_open = true;
-                lift_angle = angle - (intake_start + 720);
-            }
-            
-            if (valve_open) {
-                if (lift_angle <= duration/2.0) {
-                    intake_lifts.push_back(max_lift * lift_angle / (duration/2.0));
-                } else {
-                    intake_lifts.push_back(max_lift * (duration - lift_angle) / (duration/2.0));
-                }
-            } else {
-                intake_lifts.push_back(0.0);
-            }
+        std::vector<double> valve_angles;
+        for (int angle = 0; angle <= 720; ++angle) {
+            valve_angles.push_back(angle);
         }
-        
-        // Exhaust valve profile
-        for (double angle = 0; angle <= 720; angle += 1.0) {
-            exhaust_angles.push_back(angle);
-            double exhaust_start = engine_params.valves.exhaust.open_angle;
-            double exhaust_end = engine_params.valves.exhaust.close_angle;
-            double max_lift = engine_params.valves.exhaust.max_lift;
-            
-            // Make valve timing periodic by checking multiple cycles
-            bool valve_open = false;
-            double lift_angle = 0.0;
-            double duration = exhaust_end - exhaust_start;
-            
-            // Check current cycle (0-720°)
-            if (angle >= exhaust_start && angle <= exhaust_end) {
-                valve_open = true;
-                lift_angle = angle - exhaust_start;
-            }
-            // Check previous cycle (-720 to 0°)
-            else if (angle >= (exhaust_start - 720) && angle <= (exhaust_end - 720)) {
-                valve_open = true;
-                lift_angle = angle - (exhaust_start - 720);
-            }
-            // Check next cycle (720-1440°)
-            else if (angle >= (exhaust_start + 720) && angle <= (exhaust_end + 720)) {
-                valve_open = true;
-                lift_angle = angle - (exhaust_start + 720);
-            }
-            
-            if (valve_open) {
-                if (lift_angle <= duration/2.0) {
-                    exhaust_lifts.push_back(max_lift * lift_angle / (duration/2.0));
-                } else {
-                    exhaust_lifts.push_back(max_lift * (duration - lift_angle) / (duration/2.0));
-                }
-            } else {
-                exhaust_lifts.push_back(0.0);
-            }
-        }
-        
-        engine.set_valve_profiles(intake_angles, intake_lifts, exhaust_angles, exhaust_lifts);
-        
+        engine.set_valve_profiles(valve_angles, valve_lifts(valve_angles, engine_params.valves.intake),
+                                  valve_angles, valve_lifts(valve_angles, engine_params.valves.exhaust));
+
         std::cout << "Running engine cycle simulation..." << std::endl;
         
         // Run simulation

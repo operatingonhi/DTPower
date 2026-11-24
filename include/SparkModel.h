@@ -16,6 +16,7 @@ public:
     void set_spark_duration(double duration);
     void enable_spark(bool enabled);
     
+    double get_start_angle() const { return 360.0 - spark_timing; }
     double get_spark_power(double crank_angle) const;
     bool is_spark_active(double crank_angle) const;
 };

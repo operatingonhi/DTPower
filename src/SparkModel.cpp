@@ -28,7 +28,7 @@ double SparkModel::get_spark_power(double crank_angle) const {
     }
     
     // Convert timing to crank angle (spark occurs before TDC of compression)
-    double spark_start = 360.0 - spark_timing;  // Start angle
+    double spark_start = get_start_angle();
     double spark_end = spark_start + spark_duration;  // End angle
     
     // Gaussian energy distribution over spark duration
@@ -42,9 +42,9 @@ double SparkModel::get_spark_power(double crank_angle) const {
 }
 
 bool SparkModel::is_spark_active(double crank_angle) const {
-    if (!spark_enabled) return false;
+    if (!spark_enabled || spark_energy <= 0.0 || spark_duration <= 0.0) return false;
     
-    double spark_start = 360.0 - spark_timing;
+    double spark_start = get_start_angle();
     double spark_end = spark_start + spark_duration;
     
     return (crank_angle >= spark_start && crank_angle <= spark_end);

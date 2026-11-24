@@ -21,6 +21,7 @@ public:
     
     // Set reference values at IVC (should be called during motored run)
     void set_reference_values(double T_ivc, double P_ivc, double V_ivc);
+    void clear_reference_values() { reference_values_set = false; }
     
     double calculate_heat_transfer_coefficient(double pressure, double            
 temperature,                                                                      

@@ -72,13 +72,27 @@ private:
     
     // Energy ledger tracking
     double total_lhv_energy;           // [J] - Total LHV energy available
-    double indicated_work;             // [J] - Useful work from combustion
-    double pumping_work;               // [J] - Work lost to pumping
+    double pumping_work;               // [J] - Signed intake and exhaust stroke work
     double friction_work;              // [J] - Work lost to friction
-    double heat_transfer_loss;         // [J] - Energy lost to heat transfer
     double exhaust_energy_loss;        // [J] - Energy lost in exhaust
     double reference_enthalpy;         // [J/kg] - Reference enthalpy at intake conditions
     double T3;         // [] - Temperature just after combustion
+
+    struct CycleBalance {
+        MassTransfer inflow;
+        MassTransfer outflow;
+        double wall_heat = 0.0;             // J into the gas
+        double piston_work = 0.0;           // J out of the gas
+        double pressure_volume_work = 0.0;  // J, independent trapezoidal estimate
+        double initial_internal_energy = 0.0;
+        double internal_energy_change = 0.0;
+        double initial_mass = 0.0;
+        double mass_change = 0.0;
+
+        double energy_residual(double work) const {
+            return wall_heat + inflow.enthalpy - outflow.enthalpy - work - internal_energy_change;
+        }
+    } balance;
                                                                                   
     // Results storage                                                            
     EngineResults results;
@@ -88,7 +102,7 @@ private:
     EngineParameters engine_params;
                                                                                       
     void calculate_time_step();                                                   
-    void update_cylinder_volume();                                                
+    void advance_piston(double next_angle);
     void calculate_valve_flows();                                                 
     void initialize_flame_model();                                           
     void store_results();                                             

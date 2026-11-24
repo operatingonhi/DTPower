@@ -56,8 +56,7 @@ else()
         PkgConfig::CANTERA PkgConfig::YAML_CPP LAPACK::LAPACK)
 endif()
 
-add_executable(engine_sim
-    src/main.cpp
+add_library(engine_core STATIC
     src/Engine.cpp
     src/Cylinder.cpp
     src/WoschniHeatTransfer.cpp
@@ -68,7 +67,10 @@ add_executable(engine_sim
     src/CanteraInterface.cpp
     src/ConfigLoader.cpp
 )
-target_link_libraries(engine_sim PRIVATE engine_build_options)
+target_link_libraries(engine_core PUBLIC engine_build_options)
+
+add_executable(engine_sim src/main.cpp)
+target_link_libraries(engine_sim PRIVATE engine_core)
 
 install(TARGETS engine_sim RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
@@ -77,9 +79,27 @@ install(DIRECTORY examples/ DESTINATION ${CMAKE_INSTALL_DATADIR}/dtpower/example
 
 include(CTest)
 if(BUILD_TESTING AND NOT (CMAKE_CROSSCOMPILING AND WIN32))
-    add_executable(equilibrium_expansion_test
-        tests/equilibrium_expansion.cpp
-        src/Cylinder.cpp src/CanteraInterface.cpp src/WoschniHeatTransfer.cpp)
-    target_link_libraries(equilibrium_expansion_test PRIVATE engine_build_options)
+    add_executable(equilibrium_expansion_test tests/equilibrium_expansion.cpp)
+    target_link_libraries(equilibrium_expansion_test PRIVATE engine_core)
     add_test(NAME equilibrium_expansion COMMAND equilibrium_expansion_test)
+
+    add_executable(mechanical_models_test tests/mechanical_models.cpp)
+    target_link_libraries(mechanical_models_test PRIVATE engine_core)
+    add_test(NAME mechanical_models COMMAND mechanical_models_test)
+
+    add_executable(cycle_reuse_test tests/cycle_reuse.cpp)
+    target_link_libraries(cycle_reuse_test PRIVATE engine_core)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cycle_reuse)
+    add_test(NAME cycle_reuse COMMAND cycle_reuse_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/methane-air)
+    set_tests_properties(cycle_reuse PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cycle_reuse TIMEOUT 180)
+
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    foreach(case IN ITEMS convergence operating_range output_interval closed_cylinder invalid_inputs)
+        add_test(NAME engine_${case}
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine_cli.py
+                    $<TARGET_FILE:engine_sim> ${CMAKE_CURRENT_SOURCE_DIR}/examples/methane-air ${case})
+        set_tests_properties(engine_${case} PROPERTIES TIMEOUT 360)
+    endforeach()
 endif()

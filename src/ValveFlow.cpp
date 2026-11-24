@@ -1,6 +1,7 @@
 #include "ValveFlow.h"
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 
 ValveFlow::ValveFlow(double valve_dia, double seat_dia, double Cd)
     : valve_diameter(valve_dia), seat_diameter(seat_dia), discharge_coeff(Cd) {
@@ -8,6 +9,17 @@ ValveFlow::ValveFlow(double valve_dia, double seat_dia, double Cd)
 
 void ValveFlow::set_lift_profile(const std::vector<double>& crank_angles,
                                 const std::vector<double>& lifts) {
+    if (crank_angles.size() != lifts.size() ||
+        std::any_of(crank_angles.begin(), crank_angles.end(), [](double angle) {
+            return !std::isfinite(angle);
+        }) ||
+        std::any_of(lifts.begin(), lifts.end(), [](double lift) {
+            return !std::isfinite(lift) || lift < 0.0;
+        }) ||
+        std::adjacent_find(crank_angles.begin(), crank_angles.end(),
+                          [](double left, double right) { return left >= right; }) != crank_angles.end()) {
+        throw std::invalid_argument("Valve lift profiles require matched lifts and increasing finite angles");
+    }
     lift_angles = crank_angles;
     lift_values = lifts;
 }
@@ -18,13 +30,8 @@ double ValveFlow::interpolate_lift(double crank_angle) const {
     }
     
     // Normalize angle to 0-720 degree range (4-stroke cycle)
-    double normalized_angle = crank_angle;
-    while (normalized_angle < 0.0) {
-        normalized_angle += 720.0;
-    }
-    while (normalized_angle >= 720.0) {
-        normalized_angle -= 720.0;
-    }
+    double normalized_angle = std::fmod(crank_angle, 720.0);
+    if (normalized_angle < 0.0) normalized_angle += 720.0;
     
     // Linear interpolation between lift profile points
     for (size_t i = 0; i < lift_angles.size() - 1; i++) {
