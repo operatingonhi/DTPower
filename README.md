@@ -110,21 +110,6 @@ controls sampling. Equilibrium ignition uses constant internal energy and volume
 so its chemical energy release is already represented in the gas state.
 [Cantera thermodynamic constraints](https://cantera.org/3.2/cxx/dc/d38/classCantera_1_1ThermoPhase.html)
 
-The original methane–air run reported a 7.04 J discrepancy. Instrumenting that
-same solver run gave a first-law residual of about −0.00020 J. The earlier
-report used a fuel heating-value estimate, omitted the change in energy stored
-in the cylinder, discarded wall-heat direction, and estimated piston work from
-the sampled CSV trace. The table shows each difference's contribution to the
-old residual on the original example.
-
-| Old accounting term | Contribution to old residual |
-| --- | ---: |
-| Fuel energy and referenced exhaust substituted for inlet/outlet enthalpy | +48.82 J |
-| Intake valve backflow omitted | −1.63 J |
-| Absolute value used for wall heat | −16.85 J |
-| Work integrated from sampled CSV pressures and volumes | +7.42 J |
-| Change in stored internal energy omitted | −30.72 J |
-
 ## License
 
 DTPower is distributed under the [MIT License](LICENSE).
